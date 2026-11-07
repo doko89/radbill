@@ -1,9 +1,11 @@
 package kriskristest
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,9 +20,12 @@ import (
 type FakeInvoice struct {
 	ID        string
 	Label     string
+	Base      int64
+	Code      int64
 	Amount    int64
 	Status    string
 	QRPayload string
+	PaidAt    string
 	ExpiresAt string
 }
 
@@ -34,11 +39,14 @@ type LoggedRequest struct {
 	APIKey      string
 }
 
-// FakeKriskris is an httptest kriskris server: create/cancel/get/batch with
-// server-side HMAC verification (wrong signatures get 401). The HMAC check
-// recomputes the signature from the received values, so it verifies the
-// client's signing path end to end (the canonical format itself is pinned by
-// the fixed-vector domain test).
+// FakeKriskris is an httptest kriskris server mirroring the real contract
+// (https://kriskris.id/panduan Bab 4): X-API-Key + "v1=" HMAC auth,
+// server-picked unique codes, {ok,data} envelopes, GET status batch.
+// The HMAC check recomputes the signature from the received values, so it
+// verifies the client's signing path end to end (the canonical format
+// itself is pinned by the fixed-vector domain test). Timestamp freshness
+// is deliberately NOT enforced (tests pin the client clock; freshness is
+// covered by the domain unit test).
 type FakeKriskris struct {
 	T *testing.T
 
@@ -68,7 +76,7 @@ func NewFake(t *testing.T, apiKey, apiSecret string) *FakeKriskris {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/external/invoices", f.routeCollection)
-	mux.HandleFunc("/api/v1/external/invoices/batch", f.routeBatch)
+	mux.HandleFunc("/api/v1/external/invoices/status", f.routeStatus)
 	mux.HandleFunc("/api/v1/external/invoices/", f.routeItem)
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Server.Close)
@@ -79,9 +87,9 @@ func (f *FakeKriskris) checkAuth(w http.ResponseWriter, r *http.Request, body []
 	f.T.Helper()
 	ts := r.Header.Get("X-Kriskris-Timestamp")
 	sig := r.Header.Get("X-Kriskris-Signature")
-	key := r.Header.Get("X-Kriskris-Api-Key")
+	key := r.Header.Get("X-API-Key")
 	canonical := kriskrisdomain.CanonicalRequest(ts, r.Method, r.URL.Path, r.URL.RawQuery, body)
-	want := kriskrisdomain.SignRequest(f.APISecret, canonical)
+	want := "v1=" + kriskrisdomain.SignRequest(f.APISecret, canonical)
 	okSig := subtle.ConstantTimeCompare([]byte(sig), []byte(want)) == 1 && sig != ""
 	f.mu.Lock()
 	f.Requests = append(f.Requests, LoggedRequest{
@@ -90,11 +98,11 @@ func (f *FakeKriskris) checkAuth(w http.ResponseWriter, r *http.Request, body []
 	})
 	f.mu.Unlock()
 	if key != f.APIKey {
-		writeErr(w, http.StatusUnauthorized, "invalid_key", "bad api key")
+		writeErr(w, http.StatusUnauthorized, "", "invalid api key")
 		return false
 	}
 	if !okSig {
-		writeErr(w, http.StatusUnauthorized, "invalid_signature", "bad signature")
+		writeErr(w, http.StatusUnauthorized, "", "invalid signature")
 		return false
 	}
 	return true
@@ -102,7 +110,7 @@ func (f *FakeKriskris) checkAuth(w http.ResponseWriter, r *http.Request, body []
 
 func (f *FakeKriskris) routeCollection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "")
+		writeErr(w, http.StatusMethodNotAllowed, "", "")
 		return
 	}
 	body := readAll(r)
@@ -110,9 +118,8 @@ func (f *FakeKriskris) routeCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var v struct {
-		Amount        int64  `json:"amount"`
-		Label         string `json:"label"`
-		ExpiryMinutes int    `json:"expiry_minutes"`
+		Amount int64  `json:"amount"`
+		Label  string `json:"label"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_amount", "bad json")
@@ -123,22 +130,49 @@ func (f *FakeKriskris) routeCollection(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, payload)
 		return
 	}
-	f.mu.Lock()
-	f.seq++
-	id := f.seq
-	f.mu.Unlock()
-	kid := "kk-test-" + itoaPad(id)
-	exp := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
-	f.mu.Lock()
-	f.invoices[kid] = &FakeInvoice{
-		ID: kid, Label: v.Label, Amount: v.Amount,
-		Status: "pending", QRPayload: "QR:" + kid + ":PAY", ExpiresAt: exp,
+	if v.Amount < kriskrisdomain.MinInvoiceAmount {
+		writeErr(w, http.StatusUnprocessableEntity, kriskrisdomain.CodeInvalidAmount,
+			"amount below minimum Rp1.000")
+		return
 	}
-	inv := *f.invoices[kid]
-	f.mu.Unlock()
-	writeJSON(w, http.StatusCreated, map[string]any{"data": map[string]any{
-		"id": inv.ID, "qr_payload": inv.QRPayload, "amount": inv.Amount,
-		"status": inv.Status, "expires_at": inv.ExpiresAt,
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	used := map[int64]bool{}
+	for _, inv := range f.invoices {
+		if inv.Status == "pending" {
+			used[inv.Amount] = true
+		}
+	}
+	code := int64(0)
+	for range 90 {
+		n, err := rand.Int(rand.Reader, big.NewInt(90))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "", "rand failed")
+			return
+		}
+		if c := n.Int64() + 10; !used[v.Amount+c] {
+			code = c
+			break
+		}
+	}
+	if code == 0 {
+		writeErr(w, http.StatusUnprocessableEntity, kriskrisdomain.CodeDuplicatePending,
+			"no unique code left")
+		return
+	}
+	f.seq++
+	kid := "kk-test-" + itoaPad(f.seq)
+	exp := time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+	inv := &FakeInvoice{
+		ID: kid, Label: v.Label, Base: v.Amount, Code: code,
+		Amount: v.Amount + code, Status: "pending",
+		QRPayload: "QR:" + kid + ":PAY", ExpiresAt: exp,
+	}
+	f.invoices[kid] = inv
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": map[string]any{
+		"id": inv.ID, "status": inv.Status, "amount": inv.Amount,
+		"base_amount": inv.Base, "unique_code": inv.Code, "label": inv.Label,
+		"qr_payload": inv.QRPayload, "expires_at": inv.ExpiresAt,
 	}})
 }
 
@@ -154,13 +188,13 @@ func (f *FakeKriskris) routeItem(w http.ResponseWriter, r *http.Request) {
 		defer f.mu.Unlock()
 		inv, ok := f.invoices[kid]
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not_found", "unknown invoice")
+			writeErr(w, http.StatusNotFound, "", "unknown invoice")
 			return
 		}
 		if inv.Status == "pending" {
 			inv.Status = "cancelled"
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": kid, "status": inv.Status}})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"id": kid, "status": inv.Status}})
 		return
 	}
 	if r.Method == http.MethodGet && !strings.Contains(rest, "/") {
@@ -172,47 +206,53 @@ func (f *FakeKriskris) routeItem(w http.ResponseWriter, r *http.Request) {
 		defer f.mu.Unlock()
 		inv, ok := f.invoices[rest]
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not_found", "unknown invoice")
+			writeErr(w, http.StatusNotFound, "", "unknown invoice")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-			"id": inv.ID, "qr_payload": inv.QRPayload, "amount": inv.Amount,
-			"status": inv.Status, "expires_at": inv.ExpiresAt,
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
+			"id": inv.ID, "status": inv.Status, "amount": inv.Amount,
+			"base_amount": inv.Base, "unique_code": inv.Code, "label": inv.Label,
+			"qr_payload": inv.QRPayload, "paid_at": inv.PaidAt, "expires_at": inv.ExpiresAt,
 		}})
 		return
 	}
-	writeErr(w, http.StatusNotFound, "not_found", "")
+	writeErr(w, http.StatusNotFound, "", "")
 }
 
-func (f *FakeKriskris) routeBatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "")
+func (f *FakeKriskris) routeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "", "")
 		return
 	}
 	body := readAll(r)
 	if !f.checkAuth(w, r, body) {
 		return
 	}
-	var v struct {
-		IDs []string `json:"ids"`
+	idsParam := r.URL.Query().Get("ids")
+	var ids []string
+	if idsParam != "" {
+		ids = strings.Split(idsParam, ",")
 	}
-	if err := json.Unmarshal(body, &v); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid", "bad json")
-		return
-	}
-	if len(v.IDs) > kriskrisdomain.MaxBatchIDs {
-		writeErr(w, http.StatusBadRequest, "invalid", "batch too large")
+	if len(ids) > kriskrisdomain.MaxBatchIDs {
+		writeErr(w, http.StatusBadRequest, "", "batch too large")
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	rows := make([]map[string]any, 0, len(v.IDs))
-	for _, id := range v.IDs {
+	rows := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
 		if inv, ok := f.invoices[id]; ok {
-			rows = append(rows, map[string]any{"id": inv.ID, "status": inv.Status, "amount": inv.Amount})
+			rows = append(rows, map[string]any{
+				"id": id, "found": true, "status": inv.Status,
+				"amount": inv.Amount, "base_amount": inv.Base,
+				"unique_code": inv.Code, "label": inv.Label,
+				"paid_at": inv.PaidAt, "expires_at": inv.ExpiresAt,
+			})
+		} else {
+			rows = append(rows, map[string]any{"id": id, "found": false})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": rows})
 }
 
 func readAll(r *http.Request) []byte {
@@ -226,8 +266,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeErr emits the real failure envelope {ok:false,error,data:{code}}.
 func writeErr(w http.ResponseWriter, code int, errCode, msg string) {
-	writeJSON(w, code, map[string]any{"error": map[string]any{"code": errCode, "message": msg}})
+	body := map[string]any{"ok": false, "error": msg}
+	if errCode != "" {
+		body["data"] = map[string]any{"code": errCode}
+	}
+	writeJSON(w, code, body)
 }
 
 // SetStatus flips a remote invoice's status (and optionally amount).
@@ -238,6 +283,9 @@ func (f *FakeKriskris) SetStatus(kid, status string, amount int64) {
 		inv.Status = status
 		if amount >= 0 {
 			inv.Amount = amount
+		}
+		if status == "paid" && inv.PaidAt == "" {
+			inv.PaidAt = time.Now().UTC().Format(time.RFC3339)
 		}
 	}
 }

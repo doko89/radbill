@@ -42,6 +42,7 @@ const (
 	KeySMTPUser         = "smtp_user"
 	KeySMTPPass         = "smtp_pass"
 	KeyKriskrisBaseURL  = "kriskris_base_url"
+	KeyKriskrisMode     = "kriskris_mode" // webhook|poll
 	KeyTplIssued        = "tpl_invoice_issued"
 	KeyTplReminder      = "tpl_reminder"
 	KeyTplIsolated      = "tpl_isolated"
@@ -58,6 +59,12 @@ const (
 const (
 	NotifLog  = "log"
 	NotifSMTP = "smtp"
+)
+
+// kriskris confirmation modes.
+const (
+	KriskrisWebhook = "webhook"
+	KriskrisPoll    = "poll"
 )
 
 var (
@@ -129,6 +136,10 @@ func ValidateValue(key, value string) error {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return errors.New("must be an http(s) URL")
 		}
+	case KeyKriskrisMode:
+		if value != KriskrisWebhook && value != KriskrisPoll {
+			return errors.New("must be webhook|poll")
+		}
 	}
 	return nil
 }
@@ -162,7 +173,7 @@ func DefaultTyped() Typed {
 		GraceDays:        3,
 		CompanyName:      "Radbill",
 		NotifProvider:    NotifLog,
-		KriskrisBaseURL:  "https://api.kriskris.id",
+		KriskrisBaseURL:  "https://kriskris.id",
 		TplIssued:        "Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} telah terbit. Jatuh tempo {{.JatuhTempo}}. - {{.Perusahaan}}",
 		TplReminder:      "Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} sudah jatuh tempo {{.JatuhTempo}}. Segera bayar agar layanan tidak diisolir. - {{.Perusahaan}}",
 		TplIsolated:      "Halo {{.Nama}}, layanan {{.Username}} diisolir karena tagihan {{.Nomor}} belum lunas. Bayar untuk mengaktifkan kembali. - {{.Perusahaan}}",

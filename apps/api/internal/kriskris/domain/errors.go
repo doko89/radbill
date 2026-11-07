@@ -2,12 +2,15 @@ package kriskrisdomain
 
 import "errors"
 
-// kriskris business error codes (PRD §6.4 table).
+// kriskris business error codes (PRD §6.4 table + rate limit guard).
 const (
 	CodeDuplicatePending = "duplicate_pending"
 	CodeGobizOffline     = "gobiz_offline"
 	CodeQuotaExceeded    = "quota_exceeded"
 	CodeInvalidAmount    = "invalid_amount"
+	// CodeRateLimited is synthesized locally for HTTP 429 (the guide
+	// carries data.retry_after; callers back off and retry).
+	CodeRateLimited = "rate_limited"
 )
 
 // BizError is a typed kriskris business error. Callers switch on Code:

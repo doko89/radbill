@@ -49,8 +49,10 @@ Sifat penting:
   RFC3339 dengan toleransi ±5 menit, dan perhitungan masa aktif bergantung
   pada jam server. Verifikasi: `timedatectl status` menunjukkan
   `System clock synchronized: yes`.
-- Domain publik + HTTPS bila memakai callback kriskris (kalau tidak ada,
-  sistem tetap jalan murni dengan polling — lihat PRD §6.4).
+- Domain publik + HTTPS bila memakai callback kriskris. Mode konfirmasi
+  dipilih di `/admin/settings` → "Mode konfirmasi kriskris" (`webhook` =
+  callback + polling cadangan; `poll` = polling saja untuk jaringan privat,
+  tanpa restart). Tanpa domain publik, pakai mode `poll` — lihat PRD §6.4.
 - UDP 1812/1813 dari IP router NAS ke server radiusd, dan UDP 3799
   dua arah antara billing dan NAS (CoA/Disconnect).
 
@@ -107,6 +109,7 @@ selalu menang atas `.env`). Tanda `*` = wajib di produksi
 | `KRISKRIS_API_KEY` | — | Override env untuk `kriskris_api_key` |
 | `KRISKRIS_API_SECRET` | — | Override env untuk `kriskris_api_secret` |
 | `KRISKRIS_CALLBACK_SECRET` | — | Override env untuk `kriskris_callback_secret` |
+| `KRISKRIS_MODE` | `webhook` | `webhook` atau `poll` (poll = tanpa callback, untuk jaringan privat; berlaku live tanpa restart) |
 
 Login eksternal boilerplate (semua mati default; tidak dipakai billing):
 

@@ -15,7 +15,7 @@ settings terenkripsi, store SQL) → `application/` (service + poller) →
 // presentation (package kriskrispres)
 h := kriskrispres.NewHandler(pool *sql.DB) // baca env/settings sendiri
 h.PayInvoice    // method fiber: POST invoice :id -> buat QR
-h.AttemptStatus // method fiber: GET invoice :id (+?attempt_id=)
+h.AttemptStatus // method fiber: GET attempt :id (flat view); invoice id = legacy StatusResult
 h.Webhook       // method fiber: POST /api/v1/webhooks/kriskris (publik)
 
 // application (package kriskrisapp)
@@ -41,32 +41,39 @@ Tambahan non-didikte (opsional, tidak wajib dipakai C1):
 - Kunci AES: `SHA256(SETTINGS_ENC_KEY)`; GCM; format
   `enc:v1:<base64(nonce12|ciphertext)>`.
 - Key: `kriskris_api_key`, `kriskris_api_secret`,
-  `kriskris_callback_secret` (terenkripsi), `kriskris_base_url` (plain).
+  `kriskris_callback_secret` (terenkripsi), `kriskris_base_url` (plain),
+  `kriskris_mode` (`webhook|poll`, default webhook).
 - Env override (bila non-kosong, env menang):
   `KRISKRIS_BASE_URL`, `KRISKRIS_API_KEY`, `KRISKRIS_API_SECRET`,
-  `KRISKRIS_CALLBACK_SECRET`, `SETTINGS_ENC_KEY`.
+  `KRISKRIS_CALLBACK_SECRET`, `KRISKRIS_MODE`, `SETTINGS_ENC_KEY`.
 - Tanpa konfigurasi lengkap: semua endpoint jawab 500 generik, poller
-  log + retry tiap 30 dtk (boot tidak crash).
+  log + retry tiap 30 dtk (boot tidak crash). Mode `poll` tidak butuh
+  callback secret (webhook dinonaktifkan → 404 `webhook_disabled`).
+- Mode dibaca LIVE dari tabel settings per request webhook (ganti via
+  `/admin/settings` tanpa restart); validasi boot memakai env/tabel.
 
-## SEMUA asumsi API kriskris (tidak ada spes resmi — koreksi di satu tempat)
+## Kontrak API kriskris (terverifikasi dari panduan resmi)
 
-| # | Asumsi | Lokasi kode |
-|---|--------|-------------|
-| 1 | Header request: `X-Kriskris-Timestamp` (RFC3339 UTC), `X-Kriskris-Signature` (hex HMAC atas 5 baris kanonik PRD §6.4), `X-Kriskris-Api-Key` (identitas key) | `infrastructure/client.go` |
-| 2 | `POST /api/v1/external/invoices` body persis `{"amount":<int rupiah>,"label":<nomor invoice>,"expiry_minutes":15}` (tanpa field lain) | `Client.CreateInvoice` |
-| 3 | Respons create/get: `{"data":{"id","qr_payload","amount","status","expires_at"}}`; objek flat tanpa `data` juga diterima; alias `qr_string`/`qr_data`/`invoice_id` diterima | `decodeInvoice` |
-| 4 | `POST /api/v1/external/invoices/{id}/cancel` body `{}` (path asumsi; PRD hanya tulis "`POST .../cancel`"); 404/sudah-cancel = sukses | `Client.CancelInvoice` |
-| 5 | `GET /api/v1/external/invoices/{id}` (PRD tulis "`GET /external/invoices/:id`"); 404 → `ErrRemoteNotFound` | `Client.GetInvoice` |
-| 6 | Batch: `POST /api/v1/external/invoices/batch` body `{"ids":[...]}` maks 50, respons `{"data":[{"id","status","amount"},...]}` (key `invoices` juga diterima). Path DAN bentuk body asumsi penuh | `Client.BatchStatus` |
-| 7 | Error: `{"error":{"code","message"}}` (flat `{"code",...}` juga diterima); kode bisnis `duplicate_pending`, `gobiz_offline`, `quota_exceeded`, `invalid_amount` | `asRequestError` |
-| 8 | Webhook header `X-Kriskris-Signature: sha256=<hex>` atas body mentah (dari PRD); `X-Kriskris-Timestamp` dicek ±5 mnt HANYA bila ada (nama header asumsi) | `presentation/handler.go` |
-| 9 | Payload webhook: `delivery_id`/`event`/`data.id` (+ alias `deliveryId`, `type`, `invoice_id`, `data.invoice_id`); fallback idempotensi `evt:<event>:<id>` lalu `sha256:<body>`; event selain `invoice.paid` di-200 + abaikan | `parseWebhook` |
-| 10 | `amount` integer rupiah (bukan sen); `status` remote lowercase `pending\|paid\|expired\|cancelled\|failed` | client + service |
+Sumber: https://kriskris.id/panduan (dibaca 2026-11-07). Implementasi
+diselaraskan penuh; tabel asumsi lama dihapus.
+
+| # | Kontrak | Lokasi kode |
+|---|---------|-------------|
+| 1 | Header request: `X-API-Key`, `X-Kriskris-Timestamp` (RFC3339 UTC, ±5 mnt), `X-Kriskris-Signature: v1=` + hex HMAC-SHA256 atas 5 baris kanonik | `infrastructure/client.go` |
+| 2 | `POST /api/v1/external/invoices` body persis `{"amount":<base rupiah>,"label":<nomor invoice>}` (tanpa field lain) | `Client.CreateInvoice` |
+| 3 | Server memilih kode unik 10–99 + dedup 90 kode; respons 201 `{"ok":true,"data":{"id","status","amount","base_amount","unique_code","label","qr_payload","expires_at"}}`; base/kode/amount divalidasi konsistensi (fail closed) | `decodeInvoice`, `checkRemoteTotals` |
+| 4 | `POST /api/v1/external/invoices/{id}/cancel` body `{}`; 404/sudah-cancel = sukses | `Client.CancelInvoice` |
+| 5 | `GET /api/v1/external/invoices/{id}` → id/status/amount/base_amount/unique_code/label/paid_at/expires_at; 404 → `ErrRemoteNotFound` | `Client.GetInvoice` |
+| 6 | Batch: `GET /api/v1/external/invoices/status?ids=a,b` (maks 50, query ikut ditandatangani), respons `{"ok":true,"data":[{"id","found","status","amount",...}, ...]}` seurutan | `Client.BatchStatus` |
+| 7 | Error: `{"ok":false,"error":"msg","data":{"code"}}` via 422 untuk kode bisnis `duplicate_pending`, `gobiz_offline`, `quota_exceeded`, `invalid_amount`; 429 → `rate_limited` (+`retry_after`, dipatuhi via backoff poller) | `asRequestError` |
+| 8 | Webhook header `X-Kriskris-Signature: sha256=<hex>` atas body mentah; `X-Kriskris-Timestamp` dicek ±5 mnt HANYA bila ada | `presentation/handler.go` |
+| 9 | Payload webhook FLAT: `delivery_id`/`event`/`invoice_id` (+`merchant_id`,`amount` diabaikan; alias lama tetap diterima); idempotensi via `delivery_id`; `invoice.paid` → apply, `invoice.expired` → tutup attempt, lainnya (`test.ping`) → 200 abaikan | `parseWebhook` |
+| 10 | `amount` integer rupiah; minimal transfer Rp1.000 (dicek lokal + oleh server); `status` remote `pending\|paid\|expired\|cancelled` | client + service |
 | 11 | `expires_at` respons: RFC3339; bila kosong → now+15 mnt | `Service.Pay` |
 
 Status lokal `payment_attempts`: `pending|paid|expired|cancelled|failed`.
-Nominal remote WAJIB sama persis dengan `attempts.amount`, jika tidak TIDAK
-di-apply (PRD §6.4: contoh payload kriskris tidak konsisten).
+Nominal + base remote WAJIB cocok dengan attempt, jika tidak TIDAK
+di-apply (parkir untuk rekonsiliasi manual).
 
 Perilaku rekap: bayar di QR basi/kedaluwarsa (transfer telat) TETAP
 melunasi invoice bila nominal cocok (attempt `cancelled`/`expired` masih

@@ -10,17 +10,14 @@ import (
 // (not with this package), so they pin the canonical format, not our code.
 
 func TestCanonicalRequestVector(t *testing.T) {
-	body := []byte(`{"amount":86550,"label":"INV-001","expiry_minutes":15}`)
+	body := []byte(`{"amount":86500,"label":"INV-001"}`)
 	got := CanonicalRequest("2026-11-07T20:00:00Z", "POST", "/api/v1/external/invoices", "", body)
-	want := "2026-11-07T20:00:00Z\nPOST\n/api/v1/external/invoices\n\n81f64bc0caa4873dd89a0d05a4da940a74baecad9ae2addeea26e0f9ed647eb4"
+	want := "2026-11-07T20:00:00Z\nPOST\n/api/v1/external/invoices\n\nf562fd76d25a8bf0d97c21ed7d01509017cce9654040446cea01d4305970ee57"
 	if got != want {
 		t.Fatalf("canonical mismatch:\n got %q\nwant %q", got, want)
 	}
-	if sig := SignRequest("test-secret-key", got); sig != "f6ff834fedfbb268f3e30b937c26d8ec629ad0b1c5f8aac41a1881e191681dfa" {
-		t.Fatalf("signature = %s, want f6ff834f...", sig)
-	}
-	if sig := SignRequest("wrong", got); sig != "d5fecc10c5584579899e44ea970dc13c42e8e0a89bd3026b79a9942c717e93e2" {
-		t.Fatalf("wrong-secret signature = %s", sig)
+	if sig := SignRequest("test-secret-key", got); sig != "4995f929ac513ed9880effb355187bfa3cd2e9d3a196c5a3086493fb9f6eab60" {
+		t.Fatalf("signature = %s, want 4995f929...", sig)
 	}
 }
 
@@ -30,6 +27,15 @@ func TestCanonicalRequestGETEmptyBody(t *testing.T) {
 	want := "2026-11-07T20:00:00Z\nGET\n/api/v1/external/invoices/abc\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	if got != want {
 		t.Fatalf("canonical mismatch:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestCanonicalRequestBatchQueryVector(t *testing.T) {
+	// Batch GET signs the raw query as the 4th line (guide Bab 4).
+	got := CanonicalRequest("2026-11-07T20:00:00Z", "GET",
+		"/api/v1/external/invoices/status", "ids=kk-1,kk-2", nil)
+	if sig := SignRequest("test-secret-key", got); sig != "c05526b1fdfa44c3045534f5ed085418076eed3198e88ec389e31bc27eaa9aec" {
+		t.Fatalf("batch signature = %s", sig)
 	}
 }
 

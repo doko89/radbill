@@ -68,6 +68,12 @@ func Migrate(ctx context.Context, pool *sql.DB, driver string) error {
 	if err := ensurePaymentsNoteColumn(ctx, pool, driver); err != nil {
 		return err
 	}
+	// kriskris real-spec alignment: fix the pre-guide default base URL on
+	// databases seeded before it (only the exact old default is touched;
+	// operator-customized URLs are left alone). sqlite+postgres safe.
+	if _, err := pool.ExecContext(ctx, `UPDATE settings SET value='https://kriskris.id' WHERE key='kriskris_base_url' AND value='https://api.kriskris.id'`); err != nil {
+		return fmt.Errorf("migrate kriskris url: %w", err)
+	}
 	return nil
 }
 

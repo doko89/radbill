@@ -23,14 +23,24 @@ import (
 //     kriskris_callback_secret. Plain key: kriskris_base_url.
 //   - Env overrides (when set non-empty, env wins — handy for tests):
 //     KRISKRIS_API_KEY, KRISKRIS_API_SECRET, KRISKRIS_CALLBACK_SECRET,
-//     KRISKRIS_BASE_URL. SETTINGS_ENC_KEY supplies the decryption key.
+//     KRISKRIS_BASE_URL, KRISKRIS_MODE. SETTINGS_ENC_KEY supplies the
+//     decryption key.
 const (
 	SettingAPIKey       = "kriskris_api_key"
 	SettingAPISecret    = "kriskris_api_secret"
 	SettingCallbackSec  = "kriskris_callback_secret"
 	SettingBaseURL      = "kriskris_base_url"
+	SettingMode         = "kriskris_mode"
 	encPrefix           = "enc:v1:"
 	settingsReadTimeout = 5 * time.Second
+)
+
+// Confirmation modes (guide Bab 2): webhook (callback primary + poller
+// backup, needs a public URL) or poll (poller only, for private networks
+// that cannot receive callbacks).
+const (
+	ModeWebhook = "webhook"
+	ModePoll    = "poll"
 )
 
 // Config is the resolved kriskris configuration.
@@ -39,9 +49,12 @@ type Config struct {
 	APIKey         string
 	APISecret      string
 	CallbackSecret string
+	// Mode is ModeWebhook or ModePoll (empty behaves as webhook).
+	Mode string
 }
 
 // Validate requires every field (kriskris cannot operate half-configured).
+// Poll mode drops the callback-secret requirement (no webhooks to verify).
 func (c Config) Validate() error {
 	switch {
 	case c.BaseURL == "":
@@ -50,7 +63,9 @@ func (c Config) Validate() error {
 		return errors.New("kriskris: missing api key (KRISKRIS_API_KEY / kriskris_api_key)")
 	case c.APISecret == "":
 		return errors.New("kriskris: missing api secret (KRISKRIS_API_SECRET / kriskris_api_secret)")
-	case c.CallbackSecret == "":
+	case c.Mode != "" && c.Mode != ModeWebhook && c.Mode != ModePoll:
+		return fmt.Errorf("kriskris: bad mode %q (KRISKRIS_MODE / kriskris_mode must be webhook|poll)", c.Mode)
+	case c.Mode != ModePoll && c.CallbackSecret == "":
 		return errors.New("kriskris: missing callback secret (KRISKRIS_CALLBACK_SECRET / kriskris_callback_secret)")
 	}
 	return nil
@@ -85,6 +100,14 @@ func LoadConfigWithEnv(pool *sql.DB, getenv func(string) string) (Config, error)
 			return Config{}, err
 		}
 		cfg.BaseURL = strings.TrimSpace(v)
+	}
+	cfg.Mode = strings.ToLower(strings.TrimSpace(getenv("KRISKRIS_MODE")))
+	if cfg.Mode == "" && pool != nil {
+		v, err := readSetting(pool, SettingMode)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Mode = strings.ToLower(strings.TrimSpace(v))
 	}
 	encKey := getenv("SETTINGS_ENC_KEY")
 	for _, item := range []struct {

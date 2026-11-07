@@ -5,12 +5,10 @@ package kriskrisapp
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"strings"
 	"time"
 
@@ -19,8 +17,12 @@ import (
 	"boilerplate/api/internal/shared/id"
 )
 
-// Webhook event we act on (PRD §6.4: callback "invoice.paid").
-const EventInvoicePaid = "invoice.paid"
+// Webhook events we act on (guide Bab 5): invoice.paid applies payment,
+// invoice.expired closes the attempt early (the poller would catch it too).
+const (
+	EventInvoicePaid    = "invoice.paid"
+	EventInvoiceExpired = "invoice.expired"
+)
 
 // Service errors (presentation maps these to HTTP statuses).
 var (
@@ -140,6 +142,11 @@ func (s *Service) Pay(ctx context.Context, invoiceID, customerID string) (*PayRe
 	if inv.Status != kriskrisdomain.InvoiceUnpaid {
 		return nil, &NotPayableError{Status: inv.Status}
 	}
+	if inv.Total < kriskrisdomain.MinInvoiceAmount {
+		return nil, kriskrisdomain.NewBizError(
+			kriskrisdomain.CodeInvalidAmount,
+			fmt.Sprintf("invoice total %d below kriskris minimum %d", inv.Total, kriskrisdomain.MinInvoiceAmount))
+	}
 
 	// Cancel stale pending attempts first (PRD §6.4 step 2). Remote cancel
 	// is best-effort: the local row is closed either way so only one QR is
@@ -159,14 +166,14 @@ func (s *Service) Pay(ctx context.Context, invoiceID, customerID string) (*PayRe
 		}
 	}
 
-	code, err := randomUniqueCode()
+	// The SERVER picks the unique code (guide Bab 4): we send the base and
+	// record amount/base_amount/unique_code back after consistency checks
+	// (fail closed on a confusing upstream response).
+	remote, err := s.createWithRetry(ctx, inv.Total, inv.Number)
 	if err != nil {
 		return nil, err
 	}
-	amount := kriskrisdomain.TotalWithUniqueCode(inv.Total, code)
-
-	remote, err := s.createWithRetry(ctx, amount, inv.Number)
-	if err != nil {
+	if err := checkRemoteTotals(inv.Total, remote); err != nil {
 		return nil, err
 	}
 	expires := remote.ExpiresAt
@@ -183,9 +190,9 @@ func (s *Service) Pay(ctx context.Context, invoiceID, customerID string) (*PayRe
 		ID:         id.New(),
 		InvoiceID:  inv.ID,
 		KriskrisID: remote.ID,
-		BaseAmount: inv.Total,
-		UniqueCode: code,
-		Amount:     amount,
+		BaseAmount: remote.BaseAmount,
+		UniqueCode: remote.UniqueCode,
+		Amount:     remote.Amount,
 		QRPayload:  remote.QRPayload,
 		Status:     kriskrisdomain.AttemptPending,
 		ExpiresAt:  expTime,
@@ -202,22 +209,38 @@ func (s *Service) Pay(ctx context.Context, invoiceID, customerID string) (*PayRe
 		AttemptID: att.ID,
 		QRPayload: att.QRPayload,
 		ExpiresAt: expires,
-		Amount:    amount,
-		Base:      inv.Total,
-		Code:      code,
+		Amount:    att.Amount,
+		Base:      att.BaseAmount,
+		Code:      att.UniqueCode,
 		Message: fmt.Sprintf("Total %s, termasuk kode unik %d. Transfer tepat hingga 3 digit terakhir agar terverifikasi otomatis.",
-			formatIDR(amount), code),
+			formatIDR(att.Amount), att.UniqueCode),
 	}, nil
+}
+
+// checkRemoteTotals fails closed when a create response disagrees with what
+// we sent: wrong base, out-of-range code, or amount != base+code.
+func checkRemoteTotals(base int64, remote *kriskrisinfra.RemoteInvoice) error {
+	if remote.BaseAmount != base {
+		return fmt.Errorf("kriskris: base mismatch: sent %d, got %d", base, remote.BaseAmount)
+	}
+	if !kriskrisdomain.ValidUniqueCode(remote.UniqueCode) {
+		return fmt.Errorf("kriskris: unique code %d out of range", remote.UniqueCode)
+	}
+	if remote.Amount != kriskrisdomain.TotalWithUniqueCode(remote.BaseAmount, remote.UniqueCode) {
+		return fmt.Errorf("kriskris: amount %d != base %d + code %d",
+			remote.Amount, remote.BaseAmount, remote.UniqueCode)
+	}
+	return nil
 }
 
 // createWithRetry creates the remote invoice, retrying duplicate_pending with
 // a short backoff (PRD §6.4 table).
-func (s *Service) createWithRetry(ctx context.Context, amount int64, label string) (*kriskrisinfra.RemoteInvoice, error) {
+func (s *Service) createWithRetry(ctx context.Context, base int64, label string) (*kriskrisinfra.RemoteInvoice, error) {
 	backoffs := []time.Duration{500 * time.Millisecond, time.Second}
 	err := error(nil)
 	var inv *kriskrisinfra.RemoteInvoice
 	for attempt := 0; ; attempt++ {
-		inv, err = s.client.CreateInvoice(ctx, amount, label, int(kriskrisdomain.QRValidity.Minutes()))
+		inv, err = s.client.CreateInvoice(ctx, base, label)
 		if err == nil {
 			return inv, nil
 		}
@@ -227,15 +250,6 @@ func (s *Service) createWithRetry(ctx context.Context, amount int64, label strin
 		s.log.Printf("kriskris: duplicate_pending, retry %d: %v", attempt+1, err)
 		s.sleep(backoffs[attempt])
 	}
-}
-
-func randomUniqueCode() (int64, error) {
-	span := big.NewInt(kriskrisdomain.MaxUniqueCode - kriskrisdomain.MinUniqueCode + 1)
-	n, err := rand.Int(rand.Reader, span)
-	if err != nil {
-		return 0, fmt.Errorf("kriskris: random code: %w", err)
-	}
-	return kriskrisdomain.MinUniqueCode + n.Int64(), nil
 }
 
 func formatIDR(n int64) string {
@@ -286,10 +300,10 @@ func (s *Service) ConfirmPaid(ctx context.Context, kriskrisID string) error {
 	if remote.Status != kriskrisdomain.AttemptPaid {
 		return fmt.Errorf("%w: remote status %q", ErrNotPaidYet, remote.Status)
 	}
-	if remote.Amount != att.Amount {
-		// PRD §6.4: kriskris docs show inconsistent figures — never apply
-		// on mismatch; leave pending for manual reconciliation.
-		return fmt.Errorf("%w: attempt %d, remote %d", kriskrisinfra.ErrAmountMismatch, att.Amount, remote.Amount)
+	if remote.Amount != att.Amount || remote.BaseAmount != att.BaseAmount {
+		// Never apply on mismatch; leave pending for manual reconciliation.
+		return fmt.Errorf("%w: attempt %d/%d, remote %d/%d",
+			kriskrisinfra.ErrAmountMismatch, att.Amount, att.BaseAmount, remote.Amount, remote.BaseAmount)
 	}
 	_, err = s.store.ApplyPaidTx(ctx, att.ID, remote.Amount, s.now().UTC())
 	// G3 (agen D2, ADITIF): top-up apply-on-paid (best-effort, idempotent).
@@ -306,10 +320,36 @@ func (s *Service) ProcessWebhookSync(ctx context.Context, deliveryID, event, kri
 	if err != nil || !ok {
 		return !ok && err == nil, err
 	}
-	if event != EventInvoicePaid || kriskrisID == "" {
+	if kriskrisID == "" {
 		return false, nil
 	}
-	return false, s.ConfirmPaid(ctx, kriskrisID)
+	switch event {
+	case EventInvoicePaid:
+		return false, s.ConfirmPaid(ctx, kriskrisID)
+	case EventInvoiceExpired:
+		return false, s.ExpireAttempt(ctx, kriskrisID)
+	default:
+		return false, nil
+	}
+}
+
+// ExpireAttempt closes a pending attempt early on invoice.expired.
+// Unknown kriskris ids are ignored (nothing of ours to close).
+func (s *Service) ExpireAttempt(ctx context.Context, kriskrisID string) error {
+	if kriskrisID == "" {
+		return nil
+	}
+	att, err := s.store.GetAttemptByKriskrisID(ctx, kriskrisID)
+	if err != nil {
+		if errors.Is(err, kriskrisinfra.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if att.Status != kriskrisdomain.AttemptPending {
+		return nil
+	}
+	return s.store.SetAttemptStatus(ctx, att.ID, kriskrisdomain.AttemptExpired, s.now().UTC())
 }
 
 // AttemptView is the portal-facing attempt slice.

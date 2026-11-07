@@ -34,6 +34,9 @@ const QRValidity = 15 * time.Minute
 // MaxBatchIDs is the kriskris batch-status limit (PRD §6.4: max 50 ids).
 const MaxBatchIDs = 50
 
+// MinInvoiceAmount is the kriskris minimum transfer base (Rp1.000).
+const MinInvoiceAmount int64 = 1000
+
 // ValidUniqueCode reports whether code is in [10, 99].
 func ValidUniqueCode(code int64) bool {
 	return code >= MinUniqueCode && code <= MaxUniqueCode

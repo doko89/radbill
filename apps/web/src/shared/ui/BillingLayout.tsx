@@ -12,6 +12,7 @@ const NAV_ITEMS: { to: string; label: string; end: boolean }[] = [
   { to: "/admin/invoices", label: "Tagihan", end: false },
   { to: "/admin/reports", label: "Laporan", end: false },
   { to: "/admin/audit", label: "Audit", end: false },
+  { to: "/admin/settings", label: "Pengaturan", end: false },
 ];
 
 export function BillingLayout() {

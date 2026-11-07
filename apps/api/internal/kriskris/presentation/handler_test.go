@@ -237,7 +237,7 @@ func TestWebhookEndpoint(t *testing.T) {
 		return do(t, app, req)
 	}
 
-	payload := `{"delivery_id":"dlv-http-1","event":"invoice.paid","data":{"id":"` + kid + `"}}`
+	payload := `{"delivery_id":"dlv-http-1","event":"invoice.paid","invoice_id":"` + kid + `","merchant_id":"m1","amount":86500}`
 
 	// No signature / bad signature -> 401.
 	if code, _ := webhook(t, payload, "", nil); code != http.StatusUnauthorized {
@@ -275,7 +275,7 @@ func TestWebhookEndpoint(t *testing.T) {
 
 	// Remote flips to paid; new delivery applies asynchronously.
 	fake.SetStatus(kid, "paid", payAmount(t, pool, attID))
-	payload2 := `{"delivery_id":"dlv-http-2","event":"invoice.paid","data":{"id":"` + kid + `"}}`
+	payload2 := `{"delivery_id":"dlv-http-2","event":"invoice.paid","invoice_id":"` + kid + `"}`
 	code, _ = webhook(t, payload2, sign(t, "cb-secret", []byte(payload2)), nil)
 	if code != http.StatusOK {
 		t.Fatalf("webhook2 = %d", code)
@@ -290,10 +290,58 @@ func TestWebhookEndpoint(t *testing.T) {
 	if pays := kriskristest.ListPayments(t, pool, seed.InvoiceID); len(pays) != 2 {
 		t.Fatalf("payments = %+v", pays)
 	}
-	// Other event types: 200 ignored.
-	other := `{"delivery_id":"dlv-http-3","event":"invoice.expired","data":{"id":"` + kid + `"}}`
+	// Unknown events: 200 ignored.
+	other := `{"delivery_id":"dlv-http-3","event":"test.ping"}`
 	if code, _ := webhook(t, other, sign(t, "cb-secret", []byte(other)), nil); code != http.StatusOK {
 		t.Fatalf("other event = %d, want 200", code)
+	}
+}
+
+func TestWebhookExpiredClosesAttempt(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	seed := kriskristest.Seed(t, pool, kriskristest.SeedOpts{Tag: "http7"})
+	cust := seed.CustomerID
+	app := newTestApp(t, pool, fake, &cust)
+
+	code, body := do(t, app, jsonReq(t, http.MethodPost, "/pay/"+seed.InvoiceID, ""))
+	if code != http.StatusCreated {
+		t.Fatalf("pay = %d", code)
+	}
+	attID := body["data"].(map[string]any)["attempt_id"].(string)
+	var kid string
+	if err := pool.QueryRow(`SELECT kriskris_invoice_id FROM payment_attempts WHERE id=$1`, attID).Scan(&kid); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"delivery_id":"dlv-exp-1","event":"invoice.expired","invoice_id":"` + kid + `"}`
+	req := jsonReq(t, http.MethodPost, "/webhook", raw)
+	req.Header.Set("X-Kriskris-Signature", sign(t, "cb-secret", []byte(raw)))
+	if code, _ := do(t, app, req); code != http.StatusOK {
+		t.Fatalf("expired = %d, want 200", code)
+	}
+	if st := kriskristest.AttemptStatus(t, pool, attID); st != "expired" {
+		t.Fatalf("attempt = %q", st)
+	}
+}
+
+func TestWebhookDisabledInPollMode(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	kriskristest.SetSetting(t, pool, "kriskris_mode", "poll")
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	app := newTestApp(t, pool, fake, nil)
+	raw := `{"delivery_id":"dlv-p-1","event":"invoice.paid","invoice_id":"kk-x"}`
+	req := jsonReq(t, http.MethodPost, "/webhook", raw)
+	req.Header.Set("X-Kriskris-Signature", sign(t, "cb-secret", []byte(raw)))
+	code, body := do(t, app, req)
+	if code != http.StatusNotFound {
+		t.Fatalf("poll mode webhook = %d (%v), want 404", code, body)
+	}
+	// Flip back to webhook live (no restart): signature verified again.
+	kriskristest.SetSetting(t, pool, "kriskris_mode", "webhook")
+	req2 := jsonReq(t, http.MethodPost, "/webhook", raw)
+	req2.Header.Set("X-Kriskris-Signature", sign(t, "cb-secret", []byte(raw)))
+	if code, _ := do(t, app, req2); code != http.StatusOK {
+		t.Fatalf("webhook mode = %d, want 200", code)
 	}
 }
 

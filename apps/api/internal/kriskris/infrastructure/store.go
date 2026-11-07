@@ -101,6 +101,19 @@ unique_code, amount, qr_payload, status, expires_at, paid_at, created_at, update
 FROM payment_attempts WHERE id=$1`, attemptID)
 }
 
+// ConfirmMode returns the live confirmation mode ("webhook" or "poll").
+// Empty/missing values and read errors fail open to webhook (status quo).
+func (s *Store) ConfirmMode(ctx context.Context) string {
+	var v string
+	if err := s.pool.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='kriskris_mode'`).Scan(&v); err != nil {
+		return ModeWebhook
+	}
+	if v != ModePoll && v != ModeWebhook {
+		return ModeWebhook
+	}
+	return v
+}
+
 // GetAttemptByKriskrisID returns one attempt by remote id or ErrNotFound.
 func (s *Store) GetAttemptByKriskrisID(ctx context.Context, kriskrisID string) (*Attempt, error) {
 	return s.scanAttempt(ctx, `SELECT id, invoice_id, kriskris_invoice_id, base_amount,

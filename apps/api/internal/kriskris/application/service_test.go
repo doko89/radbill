@@ -173,23 +173,51 @@ func TestPayBusinessErrors(t *testing.T) {
 	svc := svcWithFake(t, fake, pool)
 	ctx := context.Background()
 
-	fake.OnCreate = func(amount int64, label string) (int, any) {
-		return http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"code": "gobiz_offline"}}
+	realErr := func(code string) (int, any) {
+		return http.StatusUnprocessableEntity, map[string]any{
+			"ok": false, "error": "biz " + code, "data": map[string]any{"code": code},
+		}
 	}
+	fake.OnCreate = func(amount int64, label string) (int, any) { return realErr("gobiz_offline") }
 	if _, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID); !kriskrisdomain.IsBizCode(err, "gobiz_offline") {
 		t.Fatalf("gobiz = %v", err)
 	}
-	fake.OnCreate = func(amount int64, label string) (int, any) {
-		return http.StatusPaymentRequired, map[string]any{"error": map[string]any{"code": "quota_exceeded"}}
-	}
+	fake.OnCreate = func(amount int64, label string) (int, any) { return realErr("quota_exceeded") }
 	if _, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID); !kriskrisdomain.IsBizCode(err, "quota_exceeded") {
 		t.Fatalf("quota = %v", err)
 	}
-	fake.OnCreate = func(amount int64, label string) (int, any) {
-		return http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_amount"}}
-	}
+	fake.OnCreate = func(amount int64, label string) (int, any) { return realErr("invalid_amount") }
 	if _, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID); !kriskrisdomain.IsBizCode(err, "invalid_amount") {
 		t.Fatalf("amount = %v", err)
+	}
+}
+
+func TestPayBelowMinimumRejected(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	seed := kriskristest.Seed(t, pool, kriskristest.SeedOpts{Tag: "min1", Total: 500})
+	svc := svcWithFake(t, fake, pool)
+	if _, err := svc.Pay(context.Background(), seed.InvoiceID, seed.CustomerID); !kriskrisdomain.IsBizCode(err, "invalid_amount") {
+		t.Fatalf("below minimum = %v", err)
+	}
+}
+
+func TestPayRejectsInconsistentTotals(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	seed := kriskristest.Seed(t, pool, kriskristest.SeedOpts{Tag: "con1"})
+	svc := svcWithFake(t, fake, pool)
+	ctx := context.Background()
+	// Server echoes a different base than we sent: fail closed.
+	fake.OnCreate = func(amount int64, label string) (int, any) {
+		return http.StatusCreated, map[string]any{"ok": true, "data": map[string]any{
+			"id": "kk-bad-1", "qr_payload": "QR:x", "amount": amount + 42,
+			"base_amount": amount + 1000, "unique_code": 42,
+			"status": "pending", "expires_at": time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339),
+		}}
+	}
+	if _, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID); err == nil {
+		t.Fatal("base mismatch should fail")
 	}
 }
 
@@ -205,12 +233,14 @@ func TestDuplicatePendingRetries(t *testing.T) {
 	fake.OnCreate = func(amount int64, label string) (int, any) {
 		calls++
 		if calls == 1 {
-			return http.StatusConflict, map[string]any{"error": map[string]any{"code": "duplicate_pending"}}
+			return http.StatusUnprocessableEntity, map[string]any{
+				"ok": false, "error": "no code left", "data": map[string]any{"code": "duplicate_pending"},
+			}
 		}
-		// Delegate to the default path by creating directly through a second
-		// fake-free route: emulate success with a synthetic invoice.
-		return http.StatusCreated, map[string]any{"data": map[string]any{
-			"id": "kk-retry-1", "qr_payload": "QR:kk-retry-1", "amount": amount,
+		// Synthetic success consistent with what we sent (base + code 42).
+		return http.StatusCreated, map[string]any{"ok": true, "data": map[string]any{
+			"id": "kk-retry-1", "qr_payload": "QR:kk-retry-1",
+			"amount": amount + 42, "base_amount": amount, "unique_code": 42,
 			"status": "pending", "expires_at": time.Now().UTC().Add(15 * time.Minute).Format("2006-01-02T15:04:05Z"),
 		}}
 	}
@@ -268,6 +298,31 @@ func TestConfirmUnknownAttempt(t *testing.T) {
 	dup, err = svc.ProcessWebhookSync(context.Background(), "dlv-g2", "something.else", "kk-ghost", `{}`)
 	if dup || err != nil {
 		t.Fatalf("other event = dup:%v err:%v", dup, err)
+	}
+}
+
+func TestExpiredEventClosesAttempt(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	seed := kriskristest.Seed(t, pool, kriskristest.SeedOpts{Tag: "exp1"})
+	svc := svcWithFake(t, fake, pool)
+	ctx := context.Background()
+	res, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	att, _ := svc.Store().GetAttempt(ctx, res.AttemptID)
+	dup, err := svc.ProcessWebhookSync(ctx, "dlv-e1", "invoice.expired", att.KriskrisID, `{}`)
+	if dup || err != nil {
+		t.Fatalf("expired = dup:%v err:%v", dup, err)
+	}
+	if st := kriskristest.AttemptStatus(t, pool, res.AttemptID); st != "expired" {
+		t.Fatalf("attempt = %q", st)
+	}
+	// Unknown kriskris id: ignored, not an error.
+	dup, err = svc.ProcessWebhookSync(ctx, "dlv-e2", "invoice.expired", "kk-ghost", `{}`)
+	if dup || err != nil {
+		t.Fatalf("ghost expired = dup:%v err:%v", dup, err)
 	}
 }
 

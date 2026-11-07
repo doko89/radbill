@@ -16,6 +16,7 @@ import { NasPage } from "../features/billing-nas/pages/NasPage";
 import { SessionsPage } from "../features/billing-sessions/pages/SessionsPage";
 import { InvoicesPage } from "../features/billing-invoices/pages/InvoicesPage";
 import { ReportsPage } from "../features/billing-reports/pages/ReportsPage";
+import { SettingsPage } from "../features/billing-settings/pages/SettingsPage";
 import { BillingPermissions } from "../shared/lib/billing-permissions";
 import { Layout } from "../shared/ui/Layout";
 import { RequireAuth } from "../shared/ui/RequireAuth";
@@ -135,6 +136,14 @@ export function App() {
                     element={
                       <RequireBillingPermission anyOf={[BillingPermissions.auditRead]}>
                         <AuditPage />
+                      </RequireBillingPermission>
+                    }
+                  />
+                  <Route
+                    path="/admin/settings"
+                    element={
+                      <RequireBillingPermission anyOf={[BillingPermissions.settingsWrite]}>
+                        <SettingsPage />
                       </RequireBillingPermission>
                     }
                   />

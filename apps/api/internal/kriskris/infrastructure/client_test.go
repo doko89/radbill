@@ -23,25 +23,29 @@ func newClient(t *testing.T, fake *kriskristest.FakeKriskris) *kriskrisinfra.Cli
 func TestCreateInvoiceSignsAndDecodes(t *testing.T) {
 	fake := kriskristest.NewFake(t, "test-key", "test-secret")
 	c := newClient(t, fake)
-	inv, err := c.CreateInvoice(context.Background(), 86550, "INV-001", 15)
+	inv, err := c.CreateInvoice(context.Background(), 86500, "INV-001")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if inv.ID == "" || inv.QRPayload == "" || inv.Amount != 86550 || inv.Status != "pending" || inv.ExpiresAt == "" {
+	// Server picks the unique code: base echoed, code in range, total consistent.
+	if inv.ID == "" || inv.QRPayload == "" || inv.BaseAmount != 86500 || inv.Status != "pending" || inv.ExpiresAt == "" {
 		t.Fatalf("invoice: %+v", inv)
+	}
+	if !kriskrisdomain.ValidUniqueCode(inv.UniqueCode) || inv.Amount != inv.BaseAmount+inv.UniqueCode {
+		t.Fatalf("server totals inconsistent: %+v", inv)
 	}
 	if !fake.AllSignaturesOK() {
 		t.Fatal("fake rejected client signature")
 	}
-	// Exact body fields we send (pinned: amount, label, expiry_minutes).
+	// Exact body fields we send (pinned: amount=base, label — nothing else).
 	var body map[string]any
 	if err := json.Unmarshal(fake.LastCreateBody(), &body); err != nil {
 		t.Fatalf("create body: %v", err)
 	}
-	if body["amount"] != float64(86550) || body["label"] != "INV-001" || body["expiry_minutes"] != float64(15) {
+	if body["amount"] != float64(86500) || body["label"] != "INV-001" {
 		t.Fatalf("create body = %v", body)
 	}
-	if len(body) != 3 {
+	if len(body) != 2 {
 		t.Fatalf("create body has extra fields: %v", body)
 	}
 }
@@ -50,12 +54,12 @@ func TestCreateCancelGetRoundTrip(t *testing.T) {
 	fake := kriskristest.NewFake(t, "test-key", "test-secret")
 	c := newClient(t, fake)
 	ctx := context.Background()
-	inv, err := c.CreateInvoice(ctx, 10050, "INV-RT", 15)
+	inv, err := c.CreateInvoice(ctx, 10000, "INV-RT")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	got, err := c.GetInvoice(ctx, inv.ID)
-	if err != nil || got.Amount != 10050 {
+	if err != nil || got.Amount != inv.Amount || got.BaseAmount != 10000 || got.UniqueCode != inv.UniqueCode {
 		t.Fatalf("get: %+v %v", got, err)
 	}
 	if err := c.CancelInvoice(ctx, inv.ID); err != nil {
@@ -77,22 +81,35 @@ func TestBatchStatus(t *testing.T) {
 	fake := kriskristest.NewFake(t, "test-key", "test-secret")
 	c := newClient(t, fake)
 	ctx := context.Background()
-	a, _ := c.CreateInvoice(ctx, 10010, "INV-A", 15)
-	b, _ := c.CreateInvoice(ctx, 10020, "INV-B", 15)
-	fake.SetStatus(a.ID, "paid", 10010)
+	a, _ := c.CreateInvoice(ctx, 10000, "INV-A")
+	b, _ := c.CreateInvoice(ctx, 10000, "INV-B")
+	fake.SetStatus(a.ID, "paid", a.Amount)
 	rows, err := c.BatchStatus(ctx, []string{a.ID, b.ID, "kk-nope"})
 	if err != nil {
 		t.Fatalf("batch: %v", err)
 	}
-	if len(rows) != 2 {
+	if len(rows) != 3 {
 		t.Fatalf("batch rows = %+v", rows)
 	}
 	byID := map[string]kriskrisinfra.BatchItem{}
 	for _, r := range rows {
 		byID[r.ID] = r
 	}
-	if byID[a.ID].Status != "paid" || byID[b.ID].Status != "pending" {
+	if !byID[a.ID].Found || byID[a.ID].Status != "paid" || !byID[b.ID].Found || byID[b.ID].Status != "pending" {
 		t.Fatalf("batch = %+v", rows)
+	}
+	if byID["kk-nope"].Found {
+		t.Fatalf("unknown id should be found=false: %+v", rows)
+	}
+	// Batch goes over GET with a signed query (guide Bab 4).
+	var sawGET bool
+	for _, r := range fake.Requests {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/external/invoices/status" && r.SignatureOK {
+			sawGET = true
+		}
+	}
+	if !sawGET {
+		t.Fatal("no signed GET status request observed")
 	}
 	if got, err := c.BatchStatus(ctx, nil); len(got) != 0 || err != nil {
 		t.Fatalf("empty batch = %+v %v", got, err)
@@ -114,33 +131,45 @@ func TestBusinessErrorMapping(t *testing.T) {
 		status int
 		code   string
 	}{
-		{http.StatusConflict, kriskrisdomain.CodeDuplicatePending},
-		{http.StatusServiceUnavailable, kriskrisdomain.CodeGobizOffline},
-		{http.StatusPaymentRequired, kriskrisdomain.CodeQuotaExceeded},
-		{http.StatusBadRequest, kriskrisdomain.CodeInvalidAmount},
+		{http.StatusUnprocessableEntity, kriskrisdomain.CodeDuplicatePending},
+		{http.StatusUnprocessableEntity, kriskrisdomain.CodeGobizOffline},
+		{http.StatusUnprocessableEntity, kriskrisdomain.CodeQuotaExceeded},
+		{http.StatusUnprocessableEntity, kriskrisdomain.CodeInvalidAmount},
 	}
 	for _, tc := range cases {
 		fake.OnCreate = func(amount int64, label string) (int, any) {
-			return tc.status, map[string]any{"error": map[string]any{"code": tc.code, "message": "biz " + tc.code}}
+			return tc.status, map[string]any{
+				"ok": false, "error": "biz " + tc.code,
+				"data": map[string]any{"code": tc.code},
+			}
 		}
-		_, err := c.CreateInvoice(ctx, 10010, "INV-BIZ", 15)
+		_, err := c.CreateInvoice(ctx, 10000, "INV-BIZ")
 		if !kriskrisdomain.IsBizCode(err, tc.code) {
 			t.Fatalf("code %s: err = %v", tc.code, err)
 		}
 	}
-	// Flat (non-envelope) error shape is also accepted.
+	// Legacy shapes are tolerated.
 	fake.OnCreate = func(amount int64, label string) (int, any) {
-		return http.StatusServiceUnavailable, map[string]any{"code": "gobiz_offline", "message": "flat"}
+		return http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"code": "gobiz_offline"}}
 	}
-	if _, err := c.CreateInvoice(ctx, 10010, "INV-BIZ", 15); !kriskrisdomain.IsBizCode(err, "gobiz_offline") {
-		t.Fatalf("flat error: %v", err)
+	if _, err := c.CreateInvoice(ctx, 10000, "INV-BIZ"); !kriskrisdomain.IsBizCode(err, "gobiz_offline") {
+		t.Fatalf("legacy error: %v", err)
+	}
+	// 429 maps to rate_limited.
+	fake.OnCreate = func(amount int64, label string) (int, any) {
+		return http.StatusTooManyRequests, map[string]any{
+			"ok": false, "error": "slow down", "data": map[string]any{"retry_after": 30},
+		}
+	}
+	if _, err := c.CreateInvoice(ctx, 10000, "INV-BIZ"); !kriskrisdomain.IsBizCode(err, kriskrisdomain.CodeRateLimited) {
+		t.Fatalf("429: %v", err)
 	}
 }
 
 func TestWrongSecretRejected(t *testing.T) {
 	fake := kriskristest.NewFake(t, "test-key", "test-secret")
 	c := kriskrisinfra.NewClient(fake.Server.URL, "test-key", "wrong-secret")
-	if _, err := c.CreateInvoice(context.Background(), 10010, "INV-S", 15); err == nil {
+	if _, err := c.CreateInvoice(context.Background(), 10000, "INV-S"); err == nil {
 		t.Fatal("wrong secret should fail")
 	}
 }

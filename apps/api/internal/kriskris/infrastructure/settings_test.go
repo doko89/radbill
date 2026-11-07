@@ -96,6 +96,56 @@ func TestLoadConfigSettingsFallback(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMode(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	base := map[string]string{
+		"KRISKRIS_BASE_URL":   "https://env.example",
+		"KRISKRIS_API_KEY":    "env-key",
+		"KRISKRIS_API_SECRET": "env-secret",
+	}
+	// Poll mode needs no callback secret.
+	env := map[string]string{}
+	for k, v := range base {
+		env[k] = v
+	}
+	env["KRISKRIS_MODE"] = "poll"
+	cfg, err := kriskrisinfra.LoadConfigWithEnv(pool, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Mode != kriskrisinfra.ModePoll {
+		t.Fatalf("mode = %q", cfg.Mode)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("poll without cb secret should validate: %v", err)
+	}
+	// Webhook (default) still requires it.
+	cfg2, err := kriskrisinfra.LoadConfigWithEnv(pool, func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg2.Mode != "" {
+		t.Fatalf("unset mode = %q", cfg2.Mode)
+	}
+	if err := cfg2.Validate(); err == nil {
+		t.Fatal("webhook without cb secret should not validate")
+	}
+	// Bad mode rejected.
+	bad := kriskrisinfra.Config{BaseURL: "x", APIKey: "k", APISecret: "s", CallbackSecret: "c", Mode: "smoke"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("bad mode should not validate")
+	}
+	// Mode falls back to the settings table.
+	kriskristest.SetSetting(t, pool, "kriskris_mode", "poll")
+	cfg3, err := kriskrisinfra.LoadConfigWithEnv(pool, func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg3.Mode != kriskrisinfra.ModePoll {
+		t.Fatalf("table mode = %q", cfg3.Mode)
+	}
+}
+
 func TestLoadConfigMissing(t *testing.T) {
 	pool := kriskristest.OpenDB(t)
 	cfg, err := kriskrisinfra.LoadConfigWithEnv(pool, func(string) string { return "" })

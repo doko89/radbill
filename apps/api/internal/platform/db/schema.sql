@@ -239,7 +239,8 @@ INSERT INTO settings (key, value, updated_at) VALUES ('smtp_host', '', '2026-01-
 INSERT INTO settings (key, value, updated_at) VALUES ('smtp_port', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('smtp_user', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('smtp_pass', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
-INSERT INTO settings (key, value, updated_at) VALUES ('kriskris_base_url', 'https://api.kriskris.id', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('kriskris_base_url', 'https://kriskris.id', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('kriskris_mode', 'webhook', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_invoice_issued', 'Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} telah terbit. Jatuh tempo {{.JatuhTempo}}. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_reminder', 'Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} sudah jatuh tempo {{.JatuhTempo}}. Segera bayar agar layanan tidak diisolir. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_isolated', 'Halo {{.Nama}}, layanan {{.Username}} diisolir karena tagihan {{.Nomor}} belum lunas. Bayar untuk mengaktifkan kembali. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;

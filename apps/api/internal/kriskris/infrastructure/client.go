@@ -17,38 +17,41 @@ import (
 	kriskrisdomain "boilerplate/api/internal/kriskris/domain"
 )
 
-// kriskris API assumptions (no official client spec was available; every
-// choice is pinned here and mirrored in ../README.md so C1/orchestrator can
-// correct them in one place):
+// kriskris API contract (https://kriskris.id/panduan, Bab 4; verified
+// 2026-11-07, mirrored in ../README.md):
 //
-//   - Base URL: KRISKRIS_BASE_URL env or kriskris_base_url setting, e.g.
-//     "https://api.kriskris.example". Paths below are appended to it.
-//   - Request auth: HMAC-SHA256 over the 5-line canonical string
-//     (PRD §6.4), sent as X-Kriskris-Signature, with the request timestamp
-//     in X-Kriskris-Timestamp (RFC3339 UTC) and the API key identity in
-//     X-Kriskris-Api-Key. Header names are ASSUMED.
+//   - Base URL: KRISKRIS_BASE_URL env or kriskris_base_url setting,
+//     default "https://kriskris.id". Paths below are appended to it.
+//   - Request auth: HMAC-SHA256 over the 5-line canonical string, sent as
+//     X-Kriskris-Signature ("v1="+hex), timestamp in X-Kriskris-Timestamp
+//     (RFC3339 UTC, ±5 min), key identity in X-API-Key. 60 req/min/key.
 //   - POST /api/v1/external/invoices with JSON body
-//     {"amount":<int rupiah>,"label":<invoice number>,"expiry_minutes":15}.
-//     Field names are ASSUMED. Response: {"data":{"id","qr_payload","amount",
-//     "status","expires_at"}} (a flat object without "data" is also accepted;
-//     "qr_string"/"qr_data" are accepted as qr_payload aliases).
-//   - POST /api/v1/external/invoices/{id}/cancel with body {} — ASSUMED path.
+//     {"amount":<base rupiah>,"label":<invoice number>}. The SERVER picks
+//     the unique code 10..99; response 201:
+//     {"ok":true,"data":{"id","status","amount","base_amount",
+//     "unique_code","label","qr_payload","expires_at"}}.
+//   - POST /api/v1/external/invoices/{id}/cancel with body {}.
 //     404 / already-cancelled is treated as success (idempotent cancel).
-//   - GET /api/v1/external/invoices/{id} — ASSUMED full path (PRD writes
-//     "GET /external/invoices/:id"). 404 maps to ErrRemoteNotFound.
-//   - POST /api/v1/external/invoices/batch with {"ids":[...]} (max 50),
-//     response {"data":[{"id","status","amount"},...]} — path AND shape
-//     ASSUMED ("invoices" envelope key also accepted).
-//   - Error envelope {"error":{"code","message"}} ("code" at top level also
-//     accepted). Business codes: duplicate_pending, gobiz_offline,
-//     quota_exceeded, invalid_amount (PRD §6.4).
+//   - GET /api/v1/external/invoices/{id} returns id/status/amount/
+//     base_amount/unique_code/label/paid_at/expires_at.
+//     404 maps to ErrRemoteNotFound.
+//   - GET /api/v1/external/invoices/status?ids=a,b (max 50, query is the
+//     signed 4th canonical line), response {"ok":true,"data":[
+//     {"id","found","status","amount","base_amount","unique_code",
+//     "label","paid_at","expires_at"}, ...]}.
+//   - Errors: {"ok":false,"error":"msg","data":{"code"}} with 422 for
+//     business codes (duplicate_pending, gobiz_offline, quota_exceeded,
+//     invalid_amount); 429 carries data.retry_after (seconds).
 const (
 	headerTimestamp = "X-Kriskris-Timestamp"
 	headerSignature = "X-Kriskris-Signature"
-	headerAPIKey    = "X-Kriskris-Api-Key"
+	headerAPIKey    = "X-API-Key"
+
+	// signatureScheme prefixes request signatures: "v1="+hex(HMAC).
+	signatureScheme = "v1"
 
 	pathCreate = "/api/v1/external/invoices"
-	pathBatch  = "/api/v1/external/invoices/batch"
+	pathStatus = "/api/v1/external/invoices/status"
 )
 
 // ErrRemoteNotFound means kriskris has no such invoice (HTTP 404 on GET).
@@ -79,27 +82,34 @@ func NewClient(baseURL, apiKey, apiSecret string) *Client {
 
 // RemoteInvoice is a kriskris invoice as decoded from create/get responses.
 type RemoteInvoice struct {
-	ID        string
-	Status    string // pending|paid|expired|cancelled|failed (lowercased)
-	Amount    int64
-	QRPayload string
-	ExpiresAt string // RFC3339, may be "" when the server omits it
+	ID         string
+	Status     string // pending|paid|expired|cancelled (lowercased)
+	Amount     int64  // base + unique code (transfer total)
+	BaseAmount int64  // our base, echoed by the server
+	UniqueCode int64  // server-picked 10..99
+	Label      string
+	QRPayload  string
+	PaidAt     string // RFC3339, "" unless paid
+	ExpiresAt  string // RFC3339, may be "" when the server omits it
 }
 
 // BatchItem is one row of a batch-status response.
 type BatchItem struct {
-	ID     string
-	Status string // lowercased
-	Amount int64
+	ID         string
+	Found      bool
+	Status     string // lowercased
+	Amount     int64
+	BaseAmount int64
+	UniqueCode int64
 }
 
-// CreateInvoice creates a kriskris QR invoice. amount is integer rupiah
-// (base + unique code), label is our invoice number.
-func (c *Client) CreateInvoice(ctx context.Context, amount int64, label string, expiryMinutes int) (*RemoteInvoice, error) {
+// CreateInvoice creates a kriskris QR invoice. baseAmount is integer rupiah
+// (our invoice total); the server adds the unique code. label is our
+// invoice number (optional upstream, max 64 chars).
+func (c *Client) CreateInvoice(ctx context.Context, baseAmount int64, label string) (*RemoteInvoice, error) {
 	body, err := json.Marshal(map[string]any{
-		"amount":         amount,
-		"label":          label,
-		"expiry_minutes": expiryMinutes,
+		"amount": baseAmount,
+		"label":  label,
 	})
 	if err != nil {
 		return nil, err
@@ -142,7 +152,8 @@ func (c *Client) GetInvoice(ctx context.Context, kriskrisID string) (*RemoteInvo
 	return decodeInvoice(raw)
 }
 
-// BatchStatus fetches statuses for up to MaxBatchIDs invoices in one call.
+// BatchStatus fetches statuses for up to MaxBatchIDs invoices in one call
+// via GET <pathStatus>?ids=a,b (the raw query is the signed 4th line).
 func (c *Client) BatchStatus(ctx context.Context, ids []string) ([]BatchItem, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -150,11 +161,11 @@ func (c *Client) BatchStatus(ctx context.Context, ids []string) ([]BatchItem, er
 	if len(ids) > kriskrisdomain.MaxBatchIDs {
 		return nil, fmt.Errorf("kriskris: batch of %d exceeds max %d", len(ids), kriskrisdomain.MaxBatchIDs)
 	}
-	body, err := json.Marshal(map[string]any{"ids": ids})
-	if err != nil {
-		return nil, err
+	enc := make([]string, 0, len(ids))
+	for _, id := range ids {
+		enc = append(enc, url.QueryEscape(id))
 	}
-	raw, err := c.do(ctx, http.MethodPost, pathBatch, "", body)
+	raw, err := c.do(ctx, http.MethodGet, pathStatus, "ids="+strings.Join(enc, ","), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +188,7 @@ func (c *Client) do(ctx context.Context, method, path, rawQuery string, body []b
 	stamp := c.Now().UTC().Format(time.RFC3339)
 	canonical := kriskrisdomain.CanonicalRequest(stamp, method, path, rawQuery, body)
 	req.Header.Set(headerTimestamp, stamp)
-	req.Header.Set(headerSignature, kriskrisdomain.SignRequest(c.apiSecret, canonical))
+	req.Header.Set(headerSignature, signatureScheme+"="+kriskrisdomain.SignRequest(c.apiSecret, canonical))
 	req.Header.Set(headerAPIKey, c.apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -198,7 +209,7 @@ func (c *Client) do(ctx context.Context, method, path, rawQuery string, body []b
 }
 
 func asRequestError(method, path string, status int, raw []byte) error {
-	code, message := decodeErrorEnvelope(raw)
+	code, message := decodeErrorEnvelope(status, raw)
 	if code == "" {
 		code = fmt.Sprintf("http_%d", status)
 	}
@@ -216,22 +227,51 @@ func asRequestError(method, path string, status int, raw []byte) error {
 	return fmt.Errorf("kriskris: %s %s: status %d", method, path, status)
 }
 
-func decodeErrorEnvelope(raw []byte) (code, message string) {
+func decodeErrorEnvelope(status int, raw []byte) (code, message string) {
 	var v struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Error   *struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+		Error   json.RawMessage `json:"error"`
+		Data    *struct {
+			Code string `json:"code"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
+		if status == http.StatusTooManyRequests {
+			return kriskrisdomain.CodeRateLimited, strings.TrimSpace(string(raw))
+		}
 		return "", strings.TrimSpace(string(raw))
 	}
-	if v.Error != nil && v.Error.Code != "" {
-		return v.Error.Code, v.Error.Message
+	var errStr string
+	var errObj struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
 	}
-	return v.Code, v.Message
+	if len(v.Error) > 0 {
+		if err := json.Unmarshal(v.Error, &errStr); err != nil {
+			_ = json.Unmarshal(v.Error, &errObj)
+		}
+	}
+	// Real shape: {"ok":false,"error":"msg","data":{"code",...}}.
+	if v.Data != nil && v.Data.Code != "" {
+		return v.Data.Code, errStr
+	}
+	if errObj.Code != "" {
+		return errObj.Code, errObj.Message
+	}
+	if v.Code != "" {
+		return v.Code, v.Message
+	}
+	if errStr != "" {
+		if status == http.StatusTooManyRequests {
+			return kriskrisdomain.CodeRateLimited, errStr
+		}
+		return "", errStr
+	}
+	if status == http.StatusTooManyRequests {
+		return kriskrisdomain.CodeRateLimited, ""
+	}
+	return "", ""
 }
 
 func decodeInvoice(raw []byte) (*RemoteInvoice, error) {
@@ -249,11 +289,15 @@ func decodeInvoice(raw []byte) (*RemoteInvoice, error) {
 		return nil, fmt.Errorf("kriskris: decode invoice: %w", err)
 	}
 	inv := &RemoteInvoice{
-		ID:        src.ID,
-		Status:    strings.ToLower(strings.TrimSpace(src.Status)),
-		Amount:    src.Amount,
-		QRPayload: firstNonEmpty(src.QRPayload, src.QRString, src.QRData),
-		ExpiresAt: strings.TrimSpace(src.ExpiresAt),
+		ID:         src.ID,
+		Status:     strings.ToLower(strings.TrimSpace(src.Status)),
+		Amount:     src.Amount,
+		BaseAmount: src.BaseAmount,
+		UniqueCode: src.UniqueCode,
+		Label:      strings.TrimSpace(src.Label),
+		QRPayload:  firstNonEmpty(src.QRPayload, src.QRString, src.QRData),
+		PaidAt:     strings.TrimSpace(src.PaidAt),
+		ExpiresAt:  strings.TrimSpace(src.ExpiresAt),
 	}
 	if id := strings.TrimSpace(src.InvoiceID); inv.ID == "" {
 		inv.ID = id
@@ -262,14 +306,19 @@ func decodeInvoice(raw []byte) (*RemoteInvoice, error) {
 }
 
 type invoiceJSON struct {
-	ID        string `json:"id"`
-	InvoiceID string `json:"invoice_id"`
-	Status    string `json:"status"`
-	Amount    int64  `json:"amount"`
-	QRPayload string `json:"qr_payload"`
-	QRString  string `json:"qr_string"`
-	QRData    string `json:"qr_data"`
-	ExpiresAt string `json:"expires_at"`
+	ID         string `json:"id"`
+	InvoiceID  string `json:"invoice_id"`
+	Status     string `json:"status"`
+	Amount     int64  `json:"amount"`
+	BaseAmount int64  `json:"base_amount"`
+	UniqueCode int64  `json:"unique_code"`
+	Label      string `json:"label"`
+	QRPayload  string `json:"qr_payload"`
+	QRString   string `json:"qr_string"`
+	QRData     string `json:"qr_data"`
+	PaidAt     string `json:"paid_at"`
+	ExpiresAt  string `json:"expires_at"`
+	Found      *bool  `json:"found"`
 }
 
 func decodeBatch(raw []byte) ([]BatchItem, error) {
@@ -290,10 +339,17 @@ func decodeBatch(raw []byte) ([]BatchItem, error) {
 		if id == "" {
 			id = r.InvoiceID
 		}
+		found := true
+		if r.Found != nil {
+			found = *r.Found
+		}
 		out = append(out, BatchItem{
-			ID:     id,
-			Status: strings.ToLower(strings.TrimSpace(r.Status)),
-			Amount: r.Amount,
+			ID:         id,
+			Found:      found,
+			Status:     strings.ToLower(strings.TrimSpace(r.Status)),
+			Amount:     r.Amount,
+			BaseAmount: r.BaseAmount,
+			UniqueCode: r.UniqueCode,
 		})
 	}
 	return out, nil

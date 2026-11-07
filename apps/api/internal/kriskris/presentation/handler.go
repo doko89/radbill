@@ -36,6 +36,7 @@ import (
 
 	kriskrisapp "boilerplate/api/internal/kriskris/application"
 	kriskrisdomain "boilerplate/api/internal/kriskris/domain"
+	kriskrisinfra "boilerplate/api/internal/kriskris/infrastructure"
 )
 
 // Locals keys written by C1's auth middleware (see package doc).
@@ -231,6 +232,13 @@ func (h *Handler) Webhook(c fiber.Ctx) error {
 	if h.initErr != nil || h.svc == nil {
 		return writeError(c, fiber.StatusInternalServerError, "internal", "payment unavailable")
 	}
+	if h.svc.Store().ConfirmMode(c.Context()) == kriskrisinfra.ModePoll {
+		// Poll mode: confirmations come from the poller only (private
+		// network); callbacks are disabled, not silently swallowed.
+		// Read live (not boot config) so flipping the setting in
+		// /admin/settings takes effect without a restart.
+		return writeError(c, fiber.StatusNotFound, "webhook_disabled", "webhooks disabled in poll mode")
+	}
 	raw := append([]byte(nil), c.Body()...) // copy: fasthttp reuses buffers
 	secret := h.svc.CallbackSecret()
 	if secret == "" || !kriskrisdomain.VerifyWebhookSignature(secret, raw, c.Get(webhookHeader)) {
@@ -254,7 +262,19 @@ func (h *Handler) Webhook(c fiber.Ctx) error {
 	if !claimed {
 		return c.JSON(fiber.Map{"data": fiber.Map{"duplicate": true}}) // 200, ignore
 	}
-	if parsed.event != kriskrisapp.EventInvoicePaid || parsed.kriskrisID == "" {
+	if parsed.kriskrisID == "" {
+		return c.JSON(fiber.Map{"data": fiber.Map{"received": true}}) // 200, ignore
+	}
+	switch parsed.event {
+	case kriskrisapp.EventInvoiceExpired:
+		// Fast synchronous close (one indexed update); idempotent.
+		if err := h.svc.ExpireAttempt(c.Context(), parsed.kriskrisID); err != nil {
+			log.Printf("kriskris: webhook expire %s: %v", parsed.kriskrisID, err)
+		}
+		return c.JSON(fiber.Map{"data": fiber.Map{"received": true}})
+	case kriskrisapp.EventInvoicePaid:
+		// Confirmed in a goroutine below.
+	default:
 		return c.JSON(fiber.Map{"data": fiber.Map{"received": true}}) // 200, ignore
 	}
 	svc := h.svc
@@ -271,10 +291,10 @@ func (h *Handler) Webhook(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": fiber.Map{"received": true}})
 }
 
-// webhookPayload is the tolerant parse of a kriskris callback. Field names
-// are ASSUMED (no official callback spec): delivery_id/event/data.id, with
-// common aliases accepted. NEVER trusted for settlement — ConfirmPaid
-// re-fetches via GET before applying.
+// webhookPayload is the tolerant parse of a kriskris callback. Real shape
+// (guide Bab 5) is flat: delivery_id/event/invoice_id (+merchant_id,
+// amount, ... ignored). Aliases (deliveryId/type/data.id) are accepted.
+// NEVER trusted for settlement — ConfirmPaid re-fetches via GET.
 type webhookPayload struct {
 	deliveryID string
 	event      string

@@ -102,26 +102,24 @@ default `isolir`, `isolir_rate_limit` default `128k/128k`).
 Rules lengkap + catatan halaman `/isolated` ada di
 [MIKROTIK.md](MIKROTIK.md) §5.
 
-## 2. Asumsi API kriskris
+## 2. Kontrak API kriskris (terverifikasi, bukan lagi asumsi)
 
-Tidak ada spesifikasi resmi kriskris; seluruh asumsi didokumentasikan di
-satu tempat: [`apps/api/internal/kriskris/README.md`](../apps/api/internal/kriskris/README.md)
-§"SEMUA asumsi API kriskris" (11 butir: header signature, bentuk body
-create/cancel/get/batch, envelope error + kode bisnis, header webhook,
-alias payload, satuan rupiah, `expires_at`).
+~~Tidak ada spesifikasi resmi~~ — panduan resmi
+https://kriskris.id/panduan dibaca 2026-11-07 dan implementasi diselaraskan
+penuh. Kontrak terekam di
+[`apps/api/internal/kriskris/README.md`](../apps/api/internal/kriskris/README.md)
+§"Kontrak API kriskris": header `X-API-Key` + signature `v1=`, body create
+`{amount,label}` dengan **kode unik dipilih server**, batch via
+`GET .../status?ids=`, error `{ok:false,error,data.code}`, webhook flat,
+base URL `https://kriskris.id`.
 
-Ringkasan yang paling berisiko bila API asli berbeda:
-
-| # | Asumsi paling rapuh | Dampak bila salah |
-|---|---|---|
-| 6 | Path + body batch status (`POST /api/v1/external/invoices/batch`, `{"ids":[...]}`) | Poller cadangan mati; hanya callback yang jalan |
-| 4 | Path cancel (`POST .../{id}/cancel`, body `{}`) | Attempt basi menumpuk; `duplicate_pending` naik |
-| 2–3 | Body create + envelope respons (termasuk alias `qr_string`, `invoice_id`) | Pembuatan QR gagal total |
-| 9 | Nama field webhook (`delivery_id`, `event`, `data.id`) | Idempoten jatuh ke fallback hash; duplikat diproses ulang (tetap aman karena verifikasi ulang + transaksi) |
+~~Ringkasan yang paling berisiko bila API asli berbeda~~ — sudah
+terverifikasi cocok dengan panduan resmi (batch = `GET .../status?ids=`,
+cancel, envelope respons, field webhook flat). Tabel lama dihapus.
 
 Prinsip pertahanan yang sudah diimplementasikan: **jangan percaya payload
 mentah** — setiap klaim pembayaran diverifikasi ulang via GET invoice dan
-nominal harus cocok persis dengan `payment_attempts.amount`.
+nominal + base harus cocok persis dengan attempt.
 
 ## 3. Deviasi sadar dari PRD (per fase)
 
