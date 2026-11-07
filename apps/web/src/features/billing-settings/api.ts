@@ -14,6 +14,14 @@ const settingsEnvelope = z.object({
 export const KRISKRIS_MODES = ["webhook", "poll"] as const;
 export type KriskrisMode = (typeof KRISKRIS_MODES)[number];
 
+/** Path endpoint callback kriskris (publik, verifikasi HMAC). */
+export const KRISKRIS_WEBHOOK_PATH = "/api/v1/webhooks/kriskris";
+
+/** URL webhook lengkap untuk didaftarkan di dasbor kriskris. */
+export function kriskrisWebhookUrl(origin: string): string {
+  return `${origin.replace(/\/+$/, "")}${KRISKRIS_WEBHOOK_PATH}`;
+}
+
 export const KRISKRIS_MODE_META: Record<KriskrisMode, { title: string; desc: string }> = {
   webhook: {
     title: "Webhook + polling cadangan",

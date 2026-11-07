@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy } from "lucide-react";
 import { ApiError } from "../../../shared/lib/api";
 import {
   Button,
@@ -20,6 +21,7 @@ import {
   KRISKRIS_MODE_META,
   MASKED,
   SETTING_SECTIONS,
+  kriskrisWebhookUrl,
   listSettings,
   updateSettings,
 } from "../api";
@@ -36,6 +38,8 @@ export function SettingsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [serverFields, setServerFields] = useState<Record<string, string> | undefined>(undefined);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const urlRef = useRef<HTMLInputElement>(null);
 
   const settings = useQuery({
     queryKey: ["billing", "settings"],
@@ -93,6 +97,18 @@ export function SettingsPage() {
   const stored = settings.data;
   const modeRaw = draft["kriskris_mode"] ?? stored["kriskris_mode"];
   const mode: KriskrisMode = isMode(modeRaw) ? modeRaw : "webhook";
+  const webhookUrl = kriskrisWebhookUrl(window.location.origin);
+
+  async function copyWebhookUrl(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+    } catch {
+      // Clipboard API tak tersedia (non-HTTPS): blok URL agar mudah disalin manual.
+      urlRef.current?.select();
+      setCopied(false);
+    }
+  }
 
   function setValue(key: string, value: string): void {
     setSavedNote(null);
@@ -152,6 +168,7 @@ export function SettingsPage() {
                       checked={checked}
                       onChange={() => {
                         setSavedNote(null);
+                        setCopied(false);
                         setDraft((prev) => ({ ...prev, ["kriskris_mode"]: value }));
                       }}
                       className="mt-1 accent-emerald-700 size-4 shrink-0"
@@ -164,6 +181,39 @@ export function SettingsPage() {
                 );
               })}
             </div>
+            {mode === "webhook" && (
+              <div className="mt-4 rounded-md border border-slate-300 bg-slate-50 p-3">
+                <Field
+                  label="URL webhook"
+                  htmlFor="kriskris-webhook-url"
+                  hint="Daftarkan URL ini sebagai callback di dasbor kriskris. Wajib HTTPS dan bisa diakses dari internet."
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      id="kriskris-webhook-url"
+                      ref={urlRef}
+                      type="text"
+                      readOnly
+                      value={webhookUrl}
+                      onFocus={(event) => event.target.select()}
+                      className="font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void copyWebhookUrl()}
+                      className="shrink-0 inline-flex items-center justify-center gap-1.5 text-sm font-semibold rounded-md border border-slate-300 bg-white text-slate-800 px-3 py-1.5 min-h-[36px] hover:bg-slate-50 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+                    >
+                      {copied ? (
+                        <Check className="size-4 text-emerald-700" aria-hidden="true" />
+                      ) : (
+                        <Copy className="size-4" aria-hidden="true" />
+                      )}
+                      {copied ? "Disalin!" : "Salin"}
+                    </button>
+                  </div>
+                </Field>
+              </div>
+            )}
           </fieldset>
         </Card>
 

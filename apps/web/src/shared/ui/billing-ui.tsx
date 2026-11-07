@@ -3,6 +3,7 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -51,10 +52,20 @@ const controlClass = (invalid: boolean, extra: string): string =>
     invalid ? "border-red-500" : "border-slate-300"
   } ${extra}`;
 
-type InputProps = InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean };
+type InputProps = InputHTMLAttributes<HTMLInputElement> & {
+  invalid?: boolean;
+  ref?: Ref<HTMLInputElement>;
+};
 
-export function Input({ invalid = false, className = "", ...rest }: InputProps) {
-  return <input aria-invalid={invalid || undefined} className={controlClass(invalid, className)} {...rest} />;
+export function Input({ invalid = false, className = "", ref, ...rest }: InputProps) {
+  return (
+    <input
+      ref={ref}
+      aria-invalid={invalid || undefined}
+      className={controlClass(invalid, className)}
+      {...rest}
+    />
+  );
 }
 
 type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean };
