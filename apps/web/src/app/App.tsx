@@ -2,11 +2,10 @@ import { MotionConfig } from "motion/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../features/auth/AuthProvider";
-import { LoginPage } from "../features/auth/pages/LoginPage";
 import { OrdersPage } from "../features/order/pages/OrdersPage";
 import { ProfilePage } from "../features/profile/pages/ProfilePage";
 import { BillingAuthProvider } from "../features/billing-auth/BillingAuthProvider";
-import { BillingLoginPage } from "../features/billing-auth/pages/BillingLoginPage";
+import { LoginPage } from "../features/billing-auth/pages/LoginPage";
 import { DashboardPage } from "../features/billing-dashboard/pages/DashboardPage";
 import { AuditPage } from "../features/billing-audit/pages/AuditPage";
 import { CustomersPage } from "../features/billing-customers/pages/CustomersPage";
@@ -24,7 +23,6 @@ import { BillingLayout } from "../shared/ui/BillingLayout";
 import { RequireBillingPermission } from "../shared/ui/RequireBillingPermission";
 import { PortalLayout } from "../features/portal/components/PortalLayout";
 import { RequirePortal } from "../features/portal/components/RequirePortal";
-import { PortalLoginPage } from "../features/portal/pages/PortalLoginPage";
 import { PortalDashboardPage } from "../features/portal-dashboard/pages/DashboardPage";
 import { PortalPackagesPage } from "../features/portal-packages/pages/PackagesPage";
 import { PortalInvoicesPage } from "../features/portal-invoices/pages/InvoicesPage";
@@ -51,8 +49,9 @@ export function App() {
             <BrowserRouter>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
-                <Route path="/admin/login" element={<BillingLoginPage />} />
-                <Route path="/portal/login" element={<PortalLoginPage />} />
+                {/* Alias lama: hanya ada 1 halaman login (/login). */}
+                <Route path="/admin/login" element={<Navigate to="/login" replace />} />
+                <Route path="/portal/login" element={<Navigate to="/login" replace />} />
                 <Route
                   element={
                     <RequirePortal>

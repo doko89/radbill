@@ -16,7 +16,7 @@ export function PortalLayout() {
 
   async function onLogout(): Promise<void> {
     await auth.logout();
-    navigate("/portal/login");
+    navigate("/login");
   }
 
   return (

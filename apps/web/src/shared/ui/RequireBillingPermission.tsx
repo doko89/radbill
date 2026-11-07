@@ -2,10 +2,6 @@ import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useBillingAuth } from "../../features/billing-auth/BillingAuthProvider";
 
-type LocationState = {
-  from?: unknown;
-};
-
 /**
  * Billing route guard (mirrors `RequireAuth`): requires a billing session,
  * optionally requires at least one of `anyOf` permissions.
@@ -24,7 +20,7 @@ export function RequireBillingPermission({
     return <p className="muted">Memuat…</p>;
   }
   if (!auth.user) {
-    return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   if (
     anyOf !== undefined &&
@@ -39,14 +35,4 @@ export function RequireBillingPermission({
     );
   }
   return <>{children}</>;
-}
-
-export function billingLoginRedirect(state: unknown): string {
-  if (typeof state === "object" && state !== null) {
-    const from = (state as LocationState).from;
-    if (typeof from === "string" && from.startsWith("/admin") && from !== "/admin/login") {
-      return from;
-    }
-  }
-  return "/admin";
 }

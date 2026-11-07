@@ -21,7 +21,7 @@ export function BillingLayout() {
 
   async function onLogout(): Promise<void> {
     await auth.logout();
-    navigate("/admin/login");
+    navigate("/login");
   }
 
   return (

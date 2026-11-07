@@ -162,7 +162,7 @@ export function PortalProfilePage() {
                 {busy ? "Memproses…" : "Ubah kata sandi"}
               </Button>
               <Link
-                to="/portal/login?reset=1"
+                to="/login?reset=1"
                 className="text-sm text-emerald-700 font-semibold hover:underline"
               >
                 Lupa kata sandi?

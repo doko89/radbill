@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Navigate, useLocation, useSearchParams } from "react-router-dom";
-import { House } from "lucide-react";
+import { Gauge } from "lucide-react";
 import { ApiError } from "../../../shared/lib/api";
 import { zodFieldErrors } from "../../../shared/lib/billing-forms";
+import { loginRedirectTarget } from "../../../shared/lib/login-redirect";
 import {
   Button,
   Card,
@@ -13,24 +14,23 @@ import {
   Input,
   fieldError,
 } from "../../../shared/ui/billing-ui";
-import { useBillingAuth } from "../../billing-auth/BillingAuthProvider";
+import { useBillingAuth } from "../BillingAuthProvider";
 import {
   billingLoginSchema,
   billingPasswordReset,
   billingPasswordResetRequest,
   resetConfirmSchema,
   resetRequestSchema,
-} from "../../billing-auth/api";
-import { portalLoginRedirect } from "../components/RequirePortal";
+} from "../api";
 
 type Mode = "login" | "request" | "reset";
 
 /**
- * Login portal pelanggan: reuse provider billing-auth + alur lupa sandi yang
- * sama dengan admin. Guard peran: user → portal, admin → tetap /admin.
- * Query `?reset=1` membuka mode minta token (dipakai halaman profil).
+ * Satu-satunya halaman login: admin dan pelanggan masuk lewat sini.
+ * Tujuan setelah masuk ditentukan peran (admin → /admin, user → /portal).
+ * Query `?reset=1` membuka mode minta token (dipakai halaman profil portal).
  */
-export function PortalLoginPage() {
+export function LoginPage() {
   const auth = useBillingAuth();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -51,10 +51,7 @@ export function PortalLoginPage() {
     return <p className="muted">Memuat…</p>;
   }
   if (auth.user) {
-    if (auth.user.role === "admin") {
-      return <Navigate to="/admin" replace />;
-    }
-    return <Navigate to={portalLoginRedirect(location.state)} replace />;
+    return <Navigate to={loginRedirectTarget(auth.user.role, location.state)} replace />;
   }
 
   function switchMode(next: Mode): void {
@@ -146,20 +143,16 @@ export function PortalLoginPage() {
     <div className="min-h-dvh bg-slate-100 flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="flex items-center justify-center gap-2 mb-5">
-          <House className="size-6 text-emerald-700" aria-hidden="true" />
-          <p className="m-0 text-xl font-bold text-slate-900">RadBill Portal</p>
+          <Gauge className="size-6 text-emerald-700" aria-hidden="true" />
+          <p className="m-0 text-xl font-bold text-slate-900">RadBill</p>
         </div>
         <Card>
           <h1 className="m-0 text-lg font-bold text-slate-900">
-            {mode === "login"
-              ? "Masuk portal pelanggan"
-              : mode === "request"
-                ? "Minta reset sandi"
-                : "Atur sandi baru"}
+            {mode === "login" ? "Masuk" : mode === "request" ? "Minta reset sandi" : "Atur sandi baru"}
           </h1>
           <p className="text-sm text-slate-500 mt-1 mb-5">
             {mode === "login"
-              ? "Kelola tagihan, pemakaian, dan layanan internet Anda."
+              ? "Gunakan akun admin atau pelanggan Anda."
               : mode === "request"
                 ? "Kami siapkan token reset sekali pakai."
                 : "Masukkan token dan sandi baru Anda."}
@@ -168,12 +161,12 @@ export function PortalLoginPage() {
             <form onSubmit={onLogin} className="flex flex-col gap-4" noValidate>
               <Field
                 label="Nama pengguna"
-                htmlFor="portal-username"
+                htmlFor="login-username"
                 required
                 error={clientErrors["username"] ?? fieldError(serverFields, "username")}
               >
                 <Input
-                  id="portal-username"
+                  id="login-username"
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -182,12 +175,12 @@ export function PortalLoginPage() {
               </Field>
               <Field
                 label="Kata sandi"
-                htmlFor="portal-password"
+                htmlFor="login-password"
                 required
                 error={clientErrors["password"] ?? fieldError(serverFields, "password")}
               >
                 <Input
-                  id="portal-password"
+                  id="login-password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
@@ -215,12 +208,12 @@ export function PortalLoginPage() {
             <form onSubmit={onRequestReset} className="flex flex-col gap-4" noValidate>
               <Field
                 label="Nama pengguna"
-                htmlFor="portal-reset-username"
+                htmlFor="login-reset-username"
                 required
                 error={clientErrors["username"] ?? fieldError(serverFields, "username")}
               >
                 <Input
-                  id="portal-reset-username"
+                  id="login-reset-username"
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -247,12 +240,12 @@ export function PortalLoginPage() {
               {note && <FormNote message={note} />}
               <Field
                 label="Token reset"
-                htmlFor="portal-reset-token"
+                htmlFor="login-reset-token"
                 required
                 error={clientErrors["token"] ?? fieldError(serverFields, "token")}
               >
                 <Input
-                  id="portal-reset-token"
+                  id="login-reset-token"
                   autoComplete="one-time-code"
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
@@ -261,14 +254,14 @@ export function PortalLoginPage() {
               </Field>
               <Field
                 label="Sandi baru"
-                htmlFor="portal-reset-new-password"
+                htmlFor="login-reset-new-password"
                 required
                 error={
                   clientErrors["new_password"] ?? fieldError(serverFields, "new_password", "password")
                 }
               >
                 <Input
-                  id="portal-reset-new-password"
+                  id="login-reset-new-password"
                   type="password"
                   autoComplete="new-password"
                   value={newPassword}
@@ -278,12 +271,12 @@ export function PortalLoginPage() {
               </Field>
               <Field
                 label="Konfirmasi sandi baru"
-                htmlFor="portal-reset-confirm-password"
+                htmlFor="login-reset-confirm-password"
                 required
                 error={clientErrors["confirm_password"]}
               >
                 <Input
-                  id="portal-reset-confirm-password"
+                  id="login-reset-confirm-password"
                   type="password"
                   autoComplete="new-password"
                   value={confirmPassword}
