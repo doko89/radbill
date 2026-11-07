@@ -64,6 +64,10 @@ func Migrate(ctx context.Context, pool *sql.DB, driver string) error {
 	if err := ensureAvatarURLColumn(ctx, pool, driver); err != nil {
 		return err
 	}
+	// billing Fase 2 (agen C1, ADITIF).
+	if err := ensurePaymentsNoteColumn(ctx, pool, driver); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -96,6 +100,41 @@ func ensureAvatarURLColumn(ctx context.Context, pool *sql.DB, driver string) err
 	}
 	if _, err := pool.ExecContext(ctx, alter); err != nil {
 		return fmt.Errorf("migrate add avatar_url: %w", err)
+	}
+	return nil
+}
+
+// ensurePaymentsNoteColumn adds payments.note to databases created before
+// Fase 2 (same pattern as ensureAvatarURLColumn; sqlite+postgres safe).
+func ensurePaymentsNoteColumn(ctx context.Context, pool *sql.DB, driver string) error {
+	const alter = `ALTER TABLE payments ADD COLUMN note TEXT NOT NULL DEFAULT ''`
+	if driver == "postgres" {
+		_, err := pool.ExecContext(ctx, `ALTER TABLE payments ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT ''`)
+		return err
+	}
+	rows, err := pool.QueryContext(ctx, `PRAGMA table_info(payments)`)
+	if err != nil {
+		return fmt.Errorf("migrate inspect payments: %w", err)
+	}
+	defer rows.Close()
+	var (
+		cid, notnull, pk int
+		name, typ        string
+		dflt             sql.NullString
+	)
+	for rows.Next() {
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("migrate scan payments: %w", err)
+		}
+		if name == "note" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate inspect payments: %w", err)
+	}
+	if _, err := pool.ExecContext(ctx, alter); err != nil {
+		return fmt.Errorf("migrate add payments.note: %w", err)
 	}
 	return nil
 }

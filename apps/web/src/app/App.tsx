@@ -19,6 +19,14 @@ import { Layout } from "../shared/ui/Layout";
 import { RequireAuth } from "../shared/ui/RequireAuth";
 import { BillingLayout } from "../shared/ui/BillingLayout";
 import { RequireBillingPermission } from "../shared/ui/RequireBillingPermission";
+import { PortalLayout } from "../features/portal/components/PortalLayout";
+import { RequirePortal } from "../features/portal/components/RequirePortal";
+import { PortalLoginPage } from "../features/portal/pages/PortalLoginPage";
+import { PortalDashboardPage } from "../features/portal-dashboard/pages/DashboardPage";
+import { PortalInvoicesPage } from "../features/portal-invoices/pages/InvoicesPage";
+import { PortalInvoiceDetailPage } from "../features/portal-invoices/pages/InvoiceDetailPage";
+import { PortalUsagePage } from "../features/portal-usage/pages/UsagePage";
+import { PortalProfilePage } from "../features/portal-profile/pages/ProfilePage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +48,20 @@ export function App() {
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/admin/login" element={<BillingLoginPage />} />
+                <Route path="/portal/login" element={<PortalLoginPage />} />
+                <Route
+                  element={
+                    <RequirePortal>
+                      <PortalLayout />
+                    </RequirePortal>
+                  }
+                >
+                  <Route path="/portal" element={<PortalDashboardPage />} />
+                  <Route path="/portal/invoices" element={<PortalInvoicesPage />} />
+                  <Route path="/portal/invoices/:id" element={<PortalInvoiceDetailPage />} />
+                  <Route path="/portal/usage" element={<PortalUsagePage />} />
+                  <Route path="/portal/profile" element={<PortalProfilePage />} />
+                </Route>
                 <Route
                   element={
                     <RequireBillingPermission>

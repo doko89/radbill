@@ -4,6 +4,7 @@ package application
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -71,6 +72,8 @@ type Service struct {
 	pppoe    domain.PPPoELookup
 	packages domain.PackageLookup
 	now      func() time.Time
+	// paidNotifier is the G2 post-payment hook (nil = Fase 1 behavior).
+	paidNotifier PaidNotifier
 }
 
 // NewService builds a Service.
@@ -218,6 +221,18 @@ func (s *Service) ManualPayment(ctx context.Context, invoiceID string, amount in
 	paid, err := s.invoices.PayManual(ctx, invoiceID, amount, base.Add(period), now)
 	if err != nil {
 		return InvoiceDTO{}, err
+	}
+	// G2 (agen C1, ADITIF): best-effort paid notification. Nil by default,
+	// so Fase 1 callers observe no behavior change.
+	if s.paidNotifier != nil {
+		e := PaidEvent{
+			InvoiceID: paid.ID, Number: paid.Number, Total: paid.Total,
+			DueDate: paid.DueDate, CustomerID: paid.CustomerID,
+			PPPoEAccountID: paid.PPPoEAccountID,
+		}
+		if herr := s.paidNotifier.NotifyPaid(ctx, e); herr != nil {
+			log.Printf("billing: paid hook for invoice %s: %v", paid.ID, herr)
+		}
 	}
 	return toDTO(paid), nil
 }

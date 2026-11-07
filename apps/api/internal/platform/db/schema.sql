@@ -186,3 +186,61 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT INTO settings (key, value, updated_at) VALUES ('acct_interim_interval', '300', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('isolir_rate_limit', '128k/128k', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('isolir_address_list', 'isolir', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+
+-- billing Fase 2 (agen C1, ADITIF): kontrak DDL G2. Nama tabel/kolom di bawah
+-- adalah kontrak antar-agen (C2 kriskris, C3 portal); jangan ubah.
+-- payments.note ditambah lewat ensurePaymentsNoteColumn di db.go (pola avatar_url)
+-- agar migrate tetap idempoten di sqlite maupun postgres.
+CREATE TABLE IF NOT EXISTS payment_attempts (
+    id                 TEXT PRIMARY KEY,
+    invoice_id         TEXT NOT NULL REFERENCES invoices (id),
+    kriskris_invoice_id TEXT NOT NULL UNIQUE,
+    base_amount        BIGINT NOT NULL,
+    unique_code        BIGINT NOT NULL,
+    amount             BIGINT NOT NULL,
+    qr_payload         TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'expired', 'cancelled', 'failed')),
+    expires_at         TEXT NOT NULL,
+    paid_at            TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_attempts_invoice_id ON payment_attempts (invoice_id);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    event       TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notification_log (
+    id               TEXT PRIMARY KEY,
+    kind             TEXT NOT NULL,
+    target           TEXT NOT NULL,
+    pppoe_account_id TEXT,
+    invoice_id       TEXT,
+    status           TEXT NOT NULL,
+    error            TEXT,
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_log_created_at ON notification_log (created_at);
+
+-- Seed pengaturan G2 (plain, ON CONFLICT DO NOTHING agar aman di-boot ulang).
+INSERT INTO settings (key, value, updated_at) VALUES ('billing_cycle_mode', 'activation', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('billing_cycle_day', '1', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('grace_days', '3', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('company_name', 'Radbill', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('notif_provider', 'log', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('notif_from', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('smtp_host', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('smtp_port', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('smtp_user', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('smtp_pass', '', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('kriskris_base_url', 'https://api.kriskris.id', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('tpl_invoice_issued', 'Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} telah terbit. Jatuh tempo {{.JatuhTempo}}. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('tpl_reminder', 'Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} sudah jatuh tempo {{.JatuhTempo}}. Segera bayar agar layanan tidak diisolir. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('tpl_isolated', 'Halo {{.Nama}}, layanan {{.Username}} diisolir karena tagihan {{.Nomor}} belum lunas. Bayar untuk mengaktifkan kembali. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('tpl_paid', 'Halo {{.Nama}}, pembayaran tagihan {{.Nomor}} sebesar Rp{{.Total}} diterima. Terima kasih. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;

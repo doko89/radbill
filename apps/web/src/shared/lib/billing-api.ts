@@ -112,11 +112,13 @@ function toBillingApiError(status: number, payload: unknown): ApiError {
         typeof envelope.message === "string" && envelope.message.length > 0
           ? envelope.message
           : "permintaan gagal";
+      const code =
+        typeof envelope.code === "string" && envelope.code.length > 0 ? envelope.code : undefined;
       let fields: Record<string, string> | undefined;
       if (typeof envelope.field === "string" && envelope.field.length > 0) {
         fields = { [envelope.field]: message };
       }
-      return new ApiError(status, message, fields);
+      return new ApiError(status, message, fields, code);
     }
     if (typeof record.error === "string" && record.error.length > 0) {
       return new ApiError(status, record.error);

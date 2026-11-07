@@ -34,6 +34,9 @@ type Config struct {
 	JWTAccessTTLMinutes int
 	RefreshTTLDays      int
 	TZ                  string
+	// Billing Fase 2 (agen C1, ADITIF).
+	SettingsEncKey           string
+	SchedulerIntervalSeconds int
 }
 
 // OIDCConfig enables external login (Google or any OIDC provider).
@@ -101,18 +104,19 @@ func Load() (Config, error) {
 	loadDotEnv()
 
 	cfg := Config{
-		Env:           get("APP_ENV", "dev"),
-		Port:          get("APP_PORT", "3000"),
-		DBDriver:      get("DB_DRIVER", "sqlite"),
-		SQLitePath:    get("SQLITE_PATH", "./data/app.db"),
-		DatabaseURL:   get("DATABASE_URL", ""),
-		SessionSecret: get("SESSION_SECRET", ""),
-		AdminUser:     get("ADMIN_USER", "admin"),
-		AdminPass:     get("ADMIN_PASS", ""),
-		UploadDir:     get("UPLOAD_DIR", "./data/uploads"),
-		StorageDriver: get("STORAGE_DRIVER", "local"),
-		JWTSecret:     get("JWT_SECRET", ""),
-		TZ:            get("TZ", "Asia/Jakarta"),
+		Env:            get("APP_ENV", "dev"),
+		Port:           get("APP_PORT", "3000"),
+		DBDriver:       get("DB_DRIVER", "sqlite"),
+		SQLitePath:     get("SQLITE_PATH", "./data/app.db"),
+		DatabaseURL:    get("DATABASE_URL", ""),
+		SessionSecret:  get("SESSION_SECRET", ""),
+		AdminUser:      get("ADMIN_USER", "admin"),
+		AdminPass:      get("ADMIN_PASS", ""),
+		UploadDir:      get("UPLOAD_DIR", "./data/uploads"),
+		StorageDriver:  get("STORAGE_DRIVER", "local"),
+		JWTSecret:      get("JWT_SECRET", ""),
+		TZ:             get("TZ", "Asia/Jakarta"),
+		SettingsEncKey: get("SETTINGS_ENC_KEY", ""),
 		S3: S3Config{
 			Endpoint:  get("S3_ENDPOINT", ""),
 			Region:    get("S3_REGION", "us-east-1"),
@@ -136,6 +140,18 @@ func Load() (Config, error) {
 	cfg.RefreshTTLDays, err = strconv.Atoi(get("REFRESH_TTL_DAYS", "30"))
 	if err != nil || cfg.RefreshTTLDays <= 0 {
 		return Config{}, errors.New("REFRESH_TTL_DAYS must be a positive integer")
+	}
+	// Billing Fase 2 (agen C1, ADITIF).
+	cfg.SchedulerIntervalSeconds, err = strconv.Atoi(get("SCHEDULER_INTERVAL_SECONDS", "60"))
+	if err != nil || cfg.SchedulerIntervalSeconds <= 0 {
+		return Config{}, errors.New("SCHEDULER_INTERVAL_SECONDS must be a positive integer")
+	}
+	if cfg.SettingsEncKey == "" {
+		if cfg.IsProd() {
+			return Config{}, errors.New("SETTINGS_ENC_KEY is required in prod")
+		}
+		cfg.SettingsEncKey = "dev-only-insecure-settings-key"
+		fmt.Fprintln(os.Stderr, "WARN: using insecure dev SETTINGS_ENC_KEY, set it in .env")
 	}
 	if cfg.JWTSecret == "" {
 		if cfg.IsProd() {

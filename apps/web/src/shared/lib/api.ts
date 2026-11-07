@@ -3,12 +3,15 @@ import { getCookie } from "./cookies";
 export class ApiError extends Error {
   readonly status: number;
   readonly fields: Record<string, string> | undefined;
+  /** Billing envelope code (`gobiz_offline`, `quota_exceeded`, …); undefined when absent. */
+  readonly code: string | undefined;
 
-  constructor(status: number, message: string, fields?: Record<string, string>) {
+  constructor(status: number, message: string, fields?: Record<string, string>, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.fields = fields;
+    this.code = code;
   }
 }
 

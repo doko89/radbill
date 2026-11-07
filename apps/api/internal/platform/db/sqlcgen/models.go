@@ -61,6 +61,17 @@ type Na struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+type NotificationLog struct {
+	ID             string         `json:"id"`
+	Kind           string         `json:"kind"`
+	Target         string         `json:"target"`
+	PppoeAccountID sql.NullString `json:"pppoe_account_id"`
+	InvoiceID      sql.NullString `json:"invoice_id"`
+	Status         string         `json:"status"`
+	Error          sql.NullString `json:"error"`
+	CreatedAt      string         `json:"created_at"`
+}
+
 type OidcLink struct {
 	UserID    string `json:"user_id"`
 	Issuer    string `json:"issuer"`
@@ -115,6 +126,21 @@ type Payment struct {
 	AttemptID sql.NullString `json:"attempt_id"`
 	PaidAt    string         `json:"paid_at"`
 	CreatedAt string         `json:"created_at"`
+}
+
+type PaymentAttempt struct {
+	ID                string         `json:"id"`
+	InvoiceID         string         `json:"invoice_id"`
+	KriskrisInvoiceID string         `json:"kriskris_invoice_id"`
+	BaseAmount        int64          `json:"base_amount"`
+	UniqueCode        int64          `json:"unique_code"`
+	Amount            int64          `json:"amount"`
+	QrPayload         string         `json:"qr_payload"`
+	Status            string         `json:"status"`
+	ExpiresAt         string         `json:"expires_at"`
+	PaidAt            sql.NullString `json:"paid_at"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
 }
 
 type PppoeAccount struct {
@@ -174,4 +200,11 @@ type User struct {
 	PasswordHash string `json:"password_hash"`
 	CreatedAt    string `json:"created_at"`
 	AvatarUrl    string `json:"avatar_url"`
+}
+
+type WebhookDelivery struct {
+	DeliveryID string `json:"delivery_id"`
+	Event      string `json:"event"`
+	Payload    string `json:"payload"`
+	ReceivedAt string `json:"received_at"`
 }
