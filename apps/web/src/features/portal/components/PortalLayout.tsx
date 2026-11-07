@@ -4,6 +4,7 @@ import { useBillingAuth } from "../../billing-auth/BillingAuthProvider";
 
 const NAV_ITEMS: { to: string; label: string; end: boolean }[] = [
   { to: "/portal", label: "Dasbor", end: true },
+  { to: "/portal/packages", label: "Paket", end: false },
   { to: "/portal/invoices", label: "Tagihan", end: false },
   { to: "/portal/usage", label: "Pemakaian", end: false },
   { to: "/portal/profile", label: "Profil", end: false },

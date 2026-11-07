@@ -8,6 +8,10 @@ import "time"
 const (
 	JobGenerate = "generate"
 	JobIsolate  = "isolate"
+	// JobPlanChanges is the G3 downgrade applier. It runs untracked
+	// inside RunOnce (Snapshot keeps its 2-job shape for G2); the
+	// constant names it in logs only.
+	JobPlanChanges = "plan_changes"
 )
 
 // PeriodStart returns the start of the current billing period (00:00 UTC).

@@ -143,6 +143,16 @@ type PaymentAttempt struct {
 	UpdatedAt         string         `json:"updated_at"`
 }
 
+type PlanChange struct {
+	ID             string `json:"id"`
+	PppoeAccountID string `json:"pppoe_account_id"`
+	FromPackage    string `json:"from_package"`
+	ToPackage      string `json:"to_package"`
+	EffectiveAt    string `json:"effective_at"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"created_at"`
+}
+
 type PppoeAccount struct {
 	ID         string         `json:"id"`
 	CustomerID string         `json:"customer_id"`
@@ -155,6 +165,15 @@ type PppoeAccount struct {
 	StaticIp   sql.NullString `json:"static_ip"`
 	CreatedAt  string         `json:"created_at"`
 	UpdatedAt  string         `json:"updated_at"`
+}
+
+type QuotaTopup struct {
+	ID             string         `json:"id"`
+	PppoeAccountID string         `json:"pppoe_account_id"`
+	Bytes          int64          `json:"bytes"`
+	PeriodStart    string         `json:"period_start"`
+	InvoiceID      sql.NullString `json:"invoice_id"`
+	CreatedAt      string         `json:"created_at"`
 }
 
 type RadiusSession struct {

@@ -19,12 +19,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 
 	"boilerplate/api/internal/shared/apperr"
+	topupdomain "boilerplate/api/internal/topup/domain"
 )
 
 // customerLocalsKey is the dictated Locals key C1 fills from JWT claims.
@@ -74,11 +77,26 @@ type PackageDTO struct {
 // AccountDTO is one PPPoE account of the customer (1:N per PRD §6.1).
 // Password is deliberately absent.
 type AccountDTO struct {
-	ID        string     `json:"id"`
-	Username  string     `json:"username"`
-	Status    string     `json:"status"`
-	ExpiresAt *string    `json:"expires_at"`
-	Package   PackageDTO `json:"package"`
+	ID        string        `json:"id"`
+	Username  string        `json:"username"`
+	Status    string        `json:"status"`
+	ExpiresAt *string       `json:"expires_at"`
+	Package   PackageDTO    `json:"package"`
+	Remaining *RemainingDTO `json:"remaining,omitempty"`
+	// quotaReset + createdAt feed the Remaining bucket math; unexported
+	// so the JSON shape of old consumers is unchanged (G3, ADITIF).
+	quotaReset string
+	createdAt  string
+}
+
+// RemainingDTO is the G3 per-account remainder (quota incl. top-ups,
+// online time) in the account's current usage bucket. Nil limits mean
+// unmetered; the whole object is nil when it cannot be computed.
+type RemainingDTO struct {
+	QuotaBytes    *int64 `json:"quota_bytes"`
+	QuotaUsed     int64  `json:"quota_used"`
+	OnlineSeconds *int64 `json:"online_seconds"`
+	OnlineUsed    int64  `json:"online_used"`
 }
 
 // QuotaDTO reports quota as-is from package + counters (no enforcement; G3).
@@ -202,6 +220,12 @@ func (h *Handler) Summary(c fiber.Ctx) error {
 		if err != nil {
 			return writeError(c, fiber.StatusInternalServerError, "internal", "internal error")
 		}
+	}
+
+	// G3 (agen D2, ADITIF): per-account remainder, best-effort. Old
+	// databases without quota_topups simply get Remaining=nil.
+	for i := range accounts {
+		accounts[i].Remaining = h.remainingFor(ctx, &accounts[i])
 	}
 
 	out := SummaryDTO{Accounts: accounts}
@@ -373,8 +397,11 @@ func (h *Handler) getCustomer(ctx context.Context, custID string) (*CustomerDTO,
 }
 
 func (h *Handler) listAccounts(ctx context.Context, custID string) ([]AccountDTO, error) {
+	// G3: p.quota_reset + a.created_at feed Remaining (additive columns;
+	// old fields are untouched).
 	const base = `SELECT a.id, a.username, a.status, a.expires_at,
-		p.id, p.name, p.price, p.rate_limit, p.quota_bytes, p.online_seconds_limit, p.validity_seconds
+		p.id, p.name, p.price, p.rate_limit, p.quota_bytes, p.online_seconds_limit, p.validity_seconds,
+		p.quota_reset, a.created_at
 		FROM pppoe_accounts a JOIN packages p ON p.id = a.package_id`
 	var rows *sql.Rows
 	var err error
@@ -392,8 +419,10 @@ func (h *Handler) listAccounts(ctx context.Context, custID string) ([]AccountDTO
 		var a AccountDTO
 		var expires, rate sql.NullString
 		var quota, online, validity sql.NullInt64
+		var reset, created sql.NullString
 		if err := rows.Scan(&a.ID, &a.Username, &a.Status, &expires,
-			&a.Package.ID, &a.Package.Name, &a.Package.Price, &rate, &quota, &online, &validity); err != nil {
+			&a.Package.ID, &a.Package.Name, &a.Package.Price, &rate, &quota, &online, &validity,
+			&reset, &created); err != nil {
 			return nil, err
 		}
 		a.ExpiresAt = nullStr(expires)
@@ -401,9 +430,69 @@ func (h *Handler) listAccounts(ctx context.Context, custID string) ([]AccountDTO
 		a.Package.QuotaBytes = nullInt(quota)
 		a.Package.OnlineSecondsLimit = nullInt(online)
 		a.Package.ValiditySeconds = nullInt(validity)
+		a.quotaReset = reset.String
+		a.createdAt = created.String
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// remainingFor computes the G3 per-account remainder in the account's
+// current usage bucket (same bucket key D1 enforces on). quota_bytes is
+// the package quota plus top-ups in the bucket (nil when unmetered).
+// Best-effort: any failure yields nil so Summary never breaks for old
+// databases or partially-seeded tests.
+func (h *Handler) remainingFor(ctx context.Context, a *AccountDTO) *RemainingDTO {
+	bucket := topupdomain.BucketStart(a.quotaReset, a.createdAt, time.Now().UTC())
+	topup, err := h.topupSum(ctx, a.ID, bucket)
+	if err != nil {
+		// Missing quota_topups = pre-G3 database: Remaining stays
+		// omitted, silently. Anything else is worth one log line.
+		if !isMissingTable(err) {
+			log.Printf("portal: remaining topup sum for %s: %v", a.ID, err)
+		}
+		return nil
+	}
+	usedIn, usedOut, usedOnline, err := h.bucketSums(ctx, a.ID, bucket)
+	if err != nil {
+		log.Printf("portal: remaining usage sum for %s: %v", a.ID, err)
+		return nil
+	}
+	usedBytes := usedIn + usedOut
+	out := &RemainingDTO{QuotaUsed: usedBytes, OnlineUsed: usedOnline}
+	if a.Package.QuotaBytes != nil {
+		limit := *a.Package.QuotaBytes + topup
+		out.QuotaBytes = &limit
+	}
+	out.OnlineSeconds = a.Package.OnlineSecondsLimit
+	return out
+}
+
+// topupSum sums quota_topups bytes for one account in one bucket.
+func (h *Handler) topupSum(ctx context.Context, accountID, periodStart string) (int64, error) {
+	const q = `SELECT COALESCE(SUM(bytes),0) FROM quota_topups
+		WHERE pppoe_account_id = $1 AND period_start = $2`
+	var sum int64
+	err := h.pool.QueryRowContext(ctx, q, accountID, periodStart).Scan(&sum)
+	return sum, err
+}
+
+// bucketSums sums usage_counters for one account in one bucket.
+func (h *Handler) bucketSums(ctx context.Context, accountID, periodStart string) (in, out, online int64, err error) {
+	const q = `SELECT COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), COALESCE(SUM(online_seconds),0)
+		FROM usage_counters WHERE pppoe_account_id = $1 AND period_start = $2`
+	err = h.pool.QueryRowContext(ctx, q, accountID, periodStart).Scan(&in, &out, &online)
+	return in, out, online, err
+}
+
+// isMissingTable reports the sqlite/postgres "no such table" shapes.
+func isMissingTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "does not exist")
 }
 
 func (h *Handler) counterSums(ctx context.Context, accountID string) (in, out, online int64, err error) {

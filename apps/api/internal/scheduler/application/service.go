@@ -5,6 +5,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -35,6 +36,8 @@ type Service struct {
 	deps    Deps
 	tracker *Tracker
 	now     func() time.Time
+	// planChanges is the G3 downgrade applier (nil = Fase 2 behavior).
+	planChanges PlanChangeApplier
 }
 
 // NewService builds a Service.
@@ -52,11 +55,17 @@ func (s *Service) Status() []scheddomain.Status { return s.tracker.Snapshot() }
 // Per-account failures never stop the run; the first error is returned with
 // a failure count so status shows the job needs attention.
 func (s *Service) RunOnce(ctx context.Context) error {
-	if err := s.runGenerate(ctx); err != nil {
+	var err error
+	if gerr := s.runGenerate(ctx); gerr != nil {
 		s.runIsolate(ctx)
-		return err
+		err = gerr
+	} else {
+		err = s.runIsolate(ctx)
 	}
-	return s.runIsolate(ctx)
+	// G3 (agen D2, ADITIF): due plan-change downgrades run untracked and
+	// best-effort after the G2 jobs; Snapshot keeps its 2-job shape.
+	s.runPlanChangesBestEffort(ctx)
+	return err
 }
 
 func (s *Service) runGenerate(ctx context.Context) error {
@@ -252,6 +261,43 @@ func summarize(firstErr error, failed int) error {
 		return fmt.Errorf("%v (and %d more failures)", firstErr, failed-1)
 	}
 	return firstErr
+}
+
+// PlanChangeApplier applies due plan-change downgrades. Implemented in
+// infrastructure on top of the planchanges context (G3, ADITIF).
+type PlanChangeApplier interface {
+	ApplyPlanChangesDue(ctx context.Context, now time.Time) (applied int, err error)
+}
+
+// SetPlanChangeApplier installs the G3 downgrade applier. Nil (the
+// default) keeps the Fase 2 behavior exactly.
+func (s *Service) SetPlanChangeApplier(a PlanChangeApplier) {
+	s.planChanges = a
+}
+
+// ApplyPlanChanges runs the G3 downgrade applier once (nil-safe no-op
+// when unset). Exported for tests and explicit triggers.
+func (s *Service) ApplyPlanChanges(ctx context.Context) (int, error) {
+	if s.planChanges == nil {
+		return 0, nil
+	}
+	return s.planChanges.ApplyPlanChangesDue(ctx, s.now().UTC())
+}
+
+// runPlanChangesBestEffort applies due downgrades without ever failing
+// the tick: applier errors are logged, never returned.
+func (s *Service) runPlanChangesBestEffort(ctx context.Context) {
+	if s.planChanges == nil {
+		return
+	}
+	n, err := s.planChanges.ApplyPlanChangesDue(ctx, s.now().UTC())
+	if err != nil {
+		log.Printf("scheduler: plan-changes: applied %d: %v", n, err)
+		return
+	}
+	if n > 0 {
+		log.Printf("scheduler: plan-changes: applied %d", n)
+	}
 }
 
 // Tracker records the last run per job for the status endpoint.

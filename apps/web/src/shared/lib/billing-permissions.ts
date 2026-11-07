@@ -15,6 +15,7 @@ export const BillingPermissions = {
   sessionsRead: "session:read",
   invoicesRead: "invoice:read",
   invoicesWrite: "invoice:write",
+  reportsRead: "report:read",
 } as const;
 
 export type BillingPermission = (typeof BillingPermissions)[keyof typeof BillingPermissions];

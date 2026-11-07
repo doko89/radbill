@@ -18,6 +18,8 @@ type AcctServer struct {
 	Log      *slog.Logger
 	Sessions *SessionTracker
 	Writer   *Writer
+	Usage    *UsageMirror     // nil = no usage mirror (usage still persists via Writer)
+	Enforce  *Enforcer        // nil = no interim enforcement
 	Now      func() time.Time // overridable clock (tests); nil = time.Now
 }
 
@@ -66,6 +68,7 @@ func (s *AcctServer) ack(w lradius.ResponseWriter, r *lradius.Request, nas *NAS)
 func (s *AcctServer) handleOnOff(w lradius.ResponseWriter, r *lradius.Request, nas *NAS, what string) {
 	now := s.now().UTC().Format(time.RFC3339)
 	dropped := s.Sessions.RemoveNAS(nas.ID)
+	s.Enforce.RemoveNAS(nas.ID)
 	s.Writer.Enqueue(Op{Kind: OpCloseOrphans, NASID: nas.ID, StoppedAt: now})
 	s.ack(w, r, nas)
 	s.Log.Info("accounting "+what, "nas", nas.Name, "orphans_closed", dropped)
@@ -97,6 +100,7 @@ func (s *AcctServer) handleSession(w lradius.ResponseWriter, r *lradius.Request,
 	isStart := status == rfc2866.AcctStatusType_Value_Start
 	if isStart {
 		s.Sessions.Reopen(key)
+		s.Enforce.Remove(key)
 	}
 	delta, _ := s.Sessions.Update(key, cur)
 	if delta.Duplicate && !isStart {
@@ -113,7 +117,22 @@ func (s *AcctServer) handleSession(w lradius.ResponseWriter, r *lradius.Request,
 		framedIP = ip.String()
 	}
 	stamp := now.UTC().Format(time.RFC3339)
+
+	// The usage bucket follows the account package's quota_reset mode;
+	// without a mirror or package it stays the G1 monthly bucket.
+	pkg, _ := s.Cache.Package(acct.PackageID)
 	bucket := PeriodStart(now)
+	var mirror UsageEntry
+	if s.Usage != nil && pkg != nil {
+		var rolled bool
+		mirror, rolled = s.Usage.Add(acct.ID, pkg.QuotaReset, acct.CreatedAt, now,
+			delta.In, delta.Out, delta.SessionTime)
+		bucket = mirror.PeriodStart
+		if rolled && delta.In == 0 && delta.Out == 0 && delta.SessionTime == 0 {
+			// Materialise the new bucket row even with no usage yet.
+			s.Writer.Enqueue(Op{Kind: OpUsage, AccountID: acct.ID, PeriodStart: bucket})
+		}
+	}
 
 	if delta.In > 0 || delta.Out > 0 || delta.SessionTime > 0 {
 		s.Writer.Enqueue(Op{
@@ -135,12 +154,23 @@ func (s *AcctServer) handleSession(w lradius.ResponseWriter, r *lradius.Request,
 			TerminateCause: cause, UpdatedAt: stamp,
 		})
 		s.Sessions.Stop(key, cur)
+		s.Enforce.Remove(key)
 	default: // Start, Interim-Update
 		s.Writer.Enqueue(Op{
 			Kind: OpSessionUpsert, SessionID: sessionID, AccountID: acct.ID,
 			NASID: nas.ID, FramedIP: framedIP,
 			TotalIn: int64(cur.In), TotalOut: int64(cur.Out),
 			StartedAt: stamp, UpdatedAt: stamp,
+		})
+	}
+	if status == rfc2866.AcctStatusType_Value_InterimUpdate && pkg != nil {
+		s.Enforce.CheckInterim(InterimInput{
+			NAS: nas, Account: acct, Package: pkg,
+			SessionID:   sessionID,
+			SessionUsed: cur.In + cur.Out,
+			UsedBytes:   mirror.UsedBytes(),
+			TopupBytes:  mirror.Topups,
+			IsolirRate:  s.Cache.Setting(SettingIsolirRateLimit, DefaultIsolirRateLimit),
 		})
 	}
 	s.ack(w, r, nas)

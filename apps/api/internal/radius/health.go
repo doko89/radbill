@@ -8,18 +8,23 @@ import (
 
 // Health serves the /healthz endpoint over stdlib net/http.
 type Health struct {
-	Cache  *Cache
-	Writer *Writer
-	Start  time.Time
+	Cache   *Cache
+	Writer  *Writer
+	Metrics *Metrics // nil = report zeros
+	Start   time.Time
 }
 
-// healthBody is the exact GET /healthz JSON shape.
+// healthBody is the exact GET /healthz JSON shape. coa_sent and
+// disconnects count enforcement attempts (not NAS ACKs); older clients
+// ignore the additive fields.
 type healthBody struct {
 	Status         string `json:"status"`
 	CachedAccounts int    `json:"cached_accounts"`
 	CachedNAS      int    `json:"cached_nas"`
 	AcctQueue      int    `json:"acct_queue"`
 	UptimeSeconds  int64  `json:"uptime_seconds"`
+	CoASent        int64  `json:"coa_sent"`
+	Disconnects    int64  `json:"disconnects"`
 }
 
 // Handler returns an http.Handler serving GET /healthz (404 otherwise).
@@ -33,6 +38,8 @@ func (h *Health) Handler() http.Handler {
 			CachedNAS:      nas,
 			AcctQueue:      h.Writer.QueueLen(),
 			UptimeSeconds:  int64(time.Since(h.Start).Seconds()),
+			CoASent:        h.Metrics.CoASent(),
+			Disconnects:    h.Metrics.Disconnects(),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)

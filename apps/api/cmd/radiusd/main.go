@@ -63,25 +63,32 @@ func run() error {
 	accts, nas := cache.Counts()
 	logger.Info("cache warmup ok", "accounts", accts, "nas", nas)
 
+	usage := radius.NewUsageMirror(logger)
+	if err := usage.Warmup(ctx, pool); err != nil {
+		return fmt.Errorf("usage warmup: %w", err)
+	}
+	metrics := &radius.Metrics{}
+	enforcer := radius.NewEnforcer(logger, metrics)
+
 	sessions := radius.NewSessionTracker()
 	writer := radius.NewWriter(pool, logger)
 
 	wctx, wcancel := context.WithCancel(context.Background())
 	defer wcancel()
-	go radius.RunWatcher(wctx, logger, pool, cache, cfg)
+	go radius.RunWatcher(wctx, logger, pool, cache, cfg, usage)
 	go writer.Run(wctx)
 
 	secrets := &radius.Secrets{Cache: cache, Log: logger}
 	authSrv := &lradius.PacketServer{
 		Addr:         cfg.AuthAddr,
 		SecretSource: secrets,
-		Handler:      &radius.AuthServer{Cache: cache, Log: logger},
+		Handler:      &radius.AuthServer{Cache: cache, Log: logger, Usage: usage},
 		ErrorLog:     slogBridge(logger, "auth"),
 	}
 	acctSrv := &lradius.PacketServer{
 		Addr:         cfg.AcctAddr,
 		SecretSource: secrets,
-		Handler:      &radius.AcctServer{Cache: cache, Log: logger, Sessions: sessions, Writer: writer},
+		Handler:      &radius.AcctServer{Cache: cache, Log: logger, Sessions: sessions, Writer: writer, Usage: usage, Enforce: enforcer},
 		ErrorLog:     slogBridge(logger, "acct"),
 	}
 	go func() {
@@ -97,7 +104,7 @@ func run() error {
 
 	healthSrv := &http.Server{
 		Addr:              cfg.HealthAddr,
-		Handler:           (&radius.Health{Cache: cache, Writer: writer, Start: time.Now()}).Handler(),
+		Handler:           (&radius.Health{Cache: cache, Writer: writer, Metrics: metrics, Start: time.Now()}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

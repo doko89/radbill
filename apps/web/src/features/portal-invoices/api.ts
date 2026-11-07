@@ -1,6 +1,7 @@
 export {
   getPaymentAttempt,
   getPortalInvoice,
+  getPortalSummary,
   isPayChannelDown,
   listPortalInvoices,
   payAttemptId,
@@ -10,9 +11,11 @@ export {
 export type {
   AttemptStatus,
   PayAttempt,
+  PortalAccount,
   PortalInvoice,
   PortalInvoiceDetail,
   PortalInvoiceItem,
   PortalPayment,
   PortalPendingAttempt,
+  PortalSummary,
 } from "../portal/api";

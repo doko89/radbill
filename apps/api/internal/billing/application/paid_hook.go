@@ -24,3 +24,29 @@ type PaidNotifier interface {
 func (s *Service) SetPaidNotifier(n PaidNotifier) {
 	s.paidNotifier = n
 }
+
+// fanoutNotifier calls every branch in order and returns the first error.
+// The service logs hook errors without failing the payment.
+type fanoutNotifier struct {
+	notifiers []PaidNotifier
+}
+
+// FanoutNotifiers combines post-payment hooks (G3, ADITIF): the scheduler
+// paid notification plus top-up apply-on-paid. Nil entries are skipped.
+func FanoutNotifiers(notifiers ...PaidNotifier) PaidNotifier {
+	return &fanoutNotifier{notifiers: notifiers}
+}
+
+// NotifyPaid implements PaidNotifier.
+func (f *fanoutNotifier) NotifyPaid(ctx context.Context, e PaidEvent) error {
+	var first error
+	for _, n := range f.notifiers {
+		if n == nil {
+			continue
+		}
+		if err := n.NotifyPaid(ctx, e); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}

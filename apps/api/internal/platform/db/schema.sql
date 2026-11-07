@@ -244,3 +244,31 @@ INSERT INTO settings (key, value, updated_at) VALUES ('tpl_invoice_issued', 'Hal
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_reminder', 'Halo {{.Nama}}, tagihan {{.Nomor}} sebesar Rp{{.Total}} sudah jatuh tempo {{.JatuhTempo}}. Segera bayar agar layanan tidak diisolir. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_isolated', 'Halo {{.Nama}}, layanan {{.Username}} diisolir karena tagihan {{.Nomor}} belum lunas. Bayar untuk mengaktifkan kembali. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
 INSERT INTO settings (key, value, updated_at) VALUES ('tpl_paid', 'Halo {{.Nama}}, pembayaran tagihan {{.Nomor}} sebesar Rp{{.Total}} diterima. Terima kasih. - {{.Perusahaan}}', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+
+-- billing Fase 3 (agen G3/D2, ADITIF): top-up kuota + ganti paket mandiri.
+-- Kontrak antar-agen: D1 (radius usage mirror) membaca quota_topups
+-- (pppoe_account_id, period_start, bytes); jangan ubah nama tabel/kolom.
+CREATE TABLE IF NOT EXISTS quota_topups (
+    id               TEXT PRIMARY KEY,
+    pppoe_account_id TEXT NOT NULL REFERENCES pppoe_accounts (id),
+    bytes            BIGINT NOT NULL,
+    period_start     TEXT NOT NULL,
+    invoice_id       TEXT REFERENCES invoices (id),
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_quota_topups_pppoe_account ON quota_topups (pppoe_account_id);
+
+CREATE TABLE IF NOT EXISTS plan_changes (
+    id               TEXT PRIMARY KEY,
+    pppoe_account_id TEXT NOT NULL REFERENCES pppoe_accounts (id),
+    from_package     TEXT NOT NULL,
+    to_package       TEXT NOT NULL,
+    effective_at     TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'cancelled')),
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_changes_status_effective ON plan_changes (status, effective_at);
+
+INSERT INTO settings (key, value, updated_at) VALUES ('topup_price_per_gb', '10000', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;

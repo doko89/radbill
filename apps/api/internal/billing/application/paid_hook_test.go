@@ -52,3 +52,21 @@ func TestManualPaymentHookErrorDoesNotFail(t *testing.T) {
 		t.Fatalf("hook error failed payment: %v", err)
 	}
 }
+
+// TestFanoutNotifiersRunsEveryBranch is the G3 additive assertion: the
+// scheduler notification and the top-up hook both fire; a failing branch
+// neither blocks the next nor fails the payment.
+func TestFanoutNotifiersRunsEveryBranch(t *testing.T) {
+	good := &hookRecorder{}
+	bad := &hookRecorder{err: errors.New("boom")}
+	fanout := FanoutNotifiers(good, bad, nil)
+	if err := fanout.NotifyPaid(context.Background(), PaidEvent{InvoiceID: "inv1"}); err == nil {
+		t.Fatal("expected first error")
+	}
+	if len(good.events) != 1 || len(bad.events) != 1 {
+		t.Fatalf("events = %d/%d", len(good.events), len(bad.events))
+	}
+	if err := FanoutNotifiers().NotifyPaid(context.Background(), PaidEvent{}); err != nil {
+		t.Fatalf("empty fanout = %v", err)
+	}
+}

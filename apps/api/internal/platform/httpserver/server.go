@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"strings"
 	"time"
 
@@ -46,12 +47,18 @@ import (
 	pkgapp "boilerplate/api/internal/packages/application"
 	pkginfra "boilerplate/api/internal/packages/infrastructure"
 	pkgpres "boilerplate/api/internal/packages/presentation"
+	planchangesapp "boilerplate/api/internal/planchanges/application"
+	planchangesinfra "boilerplate/api/internal/planchanges/infrastructure"
+	planchangespres "boilerplate/api/internal/planchanges/presentation"
 	"boilerplate/api/internal/platform/db/sqlcgen"
 	"boilerplate/api/internal/platform/session"
 	portalpres "boilerplate/api/internal/portal/portalpres"
 	pppoeapp "boilerplate/api/internal/pppoe/application"
 	pppoeinfra "boilerplate/api/internal/pppoe/infrastructure"
 	pppoepres "boilerplate/api/internal/pppoe/presentation"
+	reportsapp "boilerplate/api/internal/reports/application"
+	reportsinfra "boilerplate/api/internal/reports/infrastructure"
+	reportspres "boilerplate/api/internal/reports/presentation"
 	schedapp "boilerplate/api/internal/scheduler/application"
 	schedinfra "boilerplate/api/internal/scheduler/infrastructure"
 	schedpres "boilerplate/api/internal/scheduler/presentation"
@@ -62,6 +69,9 @@ import (
 	setinfra "boilerplate/api/internal/settings/infrastructure"
 	setpres "boilerplate/api/internal/settings/presentation"
 	"boilerplate/api/internal/shared/config"
+	topupapp "boilerplate/api/internal/topup/application"
+	topupinfra "boilerplate/api/internal/topup/infrastructure"
+	topuppres "boilerplate/api/internal/topup/presentation"
 	"boilerplate/api/web"
 )
 
@@ -410,10 +420,28 @@ func registerG2Routes(
 		},
 	)
 
+	// G3 (agen D2, ADITIF): top-up service, built before the paid-hook
+	// wiring below so manual payments can credit top-ups.
+	topupStore := topupinfra.NewStore(queries)
+	topupSvc := topupapp.NewService(topupapp.Deps{
+		Accounts: topupStore,
+		Prices:   topupStore,
+		Topups:   topupStore,
+		Invoices: topupStore,
+		Billing:  topupinfra.NewBillingAdapter(billSvc),
+		Events:   events,
+	})
+
 	// Scheduler: paid hook on manual payments, service, status route.
 	schedStore := schedinfra.NewStore(queries)
 	schedConfig := schedinfra.NewConfigAdapter(setSvc)
-	billSvc.SetPaidNotifier(schedinfra.NewPaidHook(schedStore, notifyDispatcher, schedConfig))
+	// G3: the G2 paid notification keeps its place; top-up apply-on-paid
+	// joins as a second fanout branch (selective + idempotent no-op for
+	// non-top-up invoices).
+	billSvc.SetPaidNotifier(billapp.FanoutNotifiers(
+		schedinfra.NewPaidHook(schedStore, notifyDispatcher, schedConfig),
+		topupinfra.NewPaidHook(topupSvc),
+	))
 	schedSvc := schedapp.NewService(schedapp.Deps{
 		Store:   schedStore,
 		Billing: schedinfra.NewBillingAdapter(billSvc),
@@ -433,6 +461,12 @@ func registerG2Routes(
 	// c.Locals("billing_customer_id") and c.Locals("billing_role") for the
 	// handlers (they never parse JWT themselves).
 	krisHandler := kriskrispres.NewHandler(pool)
+	// G3 (agen D2, ADITIF): confirmed QRIS payments credit top-ups.
+	krisHandler.SetPaidHook(func(ctx context.Context, invoiceID string) {
+		if err := topupSvc.ApplyOnInvoicePaid(ctx, invoiceID); err != nil {
+			log.Printf("topup: apply on paid %s: %v", invoiceID, err)
+		}
+	})
 	portalHandler := portalpres.NewHandler(pool)
 	portal := v1.Group("/portal")
 	portal.Get("/summary", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermCustomerReadOwn), portalHandler.Summary)
@@ -442,10 +476,59 @@ func registerG2Routes(
 	portal.Post("/invoices/:id/pay", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermPaymentWriteOwn), krisHandler.PayInvoice)
 	portal.Get("/payment-attempts/:id", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermInvoiceReadOwn), krisHandler.AttemptStatus)
 
+	registerG3Routes(admin, portal, queries, events, coaSender, authSvc, billSvc, pppoeRepo, schedSvc, topupSvc)
+
 	// Public kriskris webhook: no JWT. Registered directly on app (not on
 	// the /api group) so the group's CSRF middleware does not apply —
 	// kriskris cannot send our CSRF token. App-level middleware (helmet,
 	// recover, logger) still applies; all pre-existing routes keep their
 	// CSRF protection unchanged.
 	app.Post("/api/v1/webhooks/kriskris", krisHandler.Webhook)
+}
+
+// registerG3Routes wires billing Fase 3 (agen G3/D2, ADITIF): portal
+// top-up, self-service plan changes + public package catalog, admin plan
+// changes, JSON reports, and the scheduler downgrade applier. G1/G2
+// routes above are untouched.
+func registerG3Routes(
+	admin, portal fiber.Router,
+	queries *sqlcgen.Queries,
+	events *notify.Notifier,
+	coaSender *coa.Sender,
+	authSvc *jwtapp.Service,
+	billSvc *billapp.Service,
+	pppoeRepo *pppoeinfra.SQLRepository,
+	schedSvc *schedapp.Service,
+	topupSvc *topupapp.Service,
+) {
+	topupHandler := topuppres.NewHandler(topupSvc)
+
+	planStore := planchangesinfra.NewStore(queries, pppoeRepo)
+	planSvc := planchangesapp.NewService(planchangesapp.Deps{
+		Accounts: planStore,
+		Plans:    planStore,
+		Billing:  planchangesinfra.NewBillingAdapter(billSvc),
+		Disco:    pppoeinfra.NewCoADisconnecter(queries, coaSender),
+	})
+	planHandler := planchangespres.NewHandler(planSvc, planchangesinfra.NewPackageCatalog(queries))
+	schedSvc.SetPlanChangeApplier(schedinfra.NewPlanChangesAdapter(planSvc))
+
+	reportsSvc := reportsapp.NewService(reportsinfra.NewStore(queries))
+	reportsHandler := reportspres.NewHandler(reportsSvc)
+
+	// Portal self-service: same *_own permission style as the G2 portal.
+	portal.Post("/topup", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermPaymentWriteOwn), topupHandler.Topup)
+	portal.Post("/plan-changes", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermPaymentWriteOwn), planHandler.Create)
+	portal.Get("/plan-changes", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermInvoiceReadOwn), planHandler.List)
+	portal.Post("/plan-changes/:id/cancel", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermPaymentWriteOwn), planHandler.Cancel)
+	portal.Get("/packages", jwtpres.RequireWithBillingContext(authSvc, jwtauthdomain.PermPackageRead), planHandler.Packages)
+
+	// Admin plan changes + reports (admin holds every global permission).
+	admin.Get("/plan-changes", jwtpres.Require(authSvc, jwtauthdomain.PermPPPoERead), planHandler.ListAdmin)
+	reports := admin.Group("/reports")
+	reportsRead := jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead)
+	reports.Get("/revenue", reportsRead, reportsHandler.Revenue)
+	reports.Get("/usage", reportsRead, reportsHandler.Usage)
+	reports.Get("/receivables", reportsRead, reportsHandler.Receivables)
+	reports.Get("/growth", reportsRead, reportsHandler.Growth)
 }

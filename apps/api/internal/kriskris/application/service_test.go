@@ -270,3 +270,49 @@ func TestConfirmUnknownAttempt(t *testing.T) {
 		t.Fatalf("other event = dup:%v err:%v", dup, err)
 	}
 }
+
+// TestConfirmPaidFiresPaidHook is the G3 additive assertion: a confirmed
+// payment fires the apply-on-paid hook with the settled invoice id, while
+// failures and re-confirms stay silent.
+func TestConfirmPaidFiresPaidHook(t *testing.T) {
+	pool := kriskristest.OpenDB(t)
+	fake := kriskristest.NewFake(t, "test-key", "test-secret")
+	seed := kriskristest.Seed(t, pool, kriskristest.SeedOpts{Tag: "hook1"})
+	svc := svcWithFake(t, fake, pool)
+	ctx := context.Background()
+
+	var fired []string
+	svc.SetPaidHook(func(_ context.Context, invoiceID string) {
+		fired = append(fired, invoiceID)
+	})
+	res, err := svc.Pay(ctx, seed.InvoiceID, seed.CustomerID)
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	att, err := svc.Store().GetAttempt(ctx, res.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unpaid remote: no hook.
+	if err := svc.ConfirmPaid(ctx, att.KriskrisID); !errors.Is(err, kriskrisapp.ErrNotPaidYet) {
+		t.Fatalf("unpaid = %v", err)
+	}
+	if len(fired) != 0 {
+		t.Fatalf("fired early: %v", fired)
+	}
+	// Paid remote: exactly one hook with the invoice id.
+	fake.SetStatus(att.KriskrisID, "paid", att.Amount)
+	if err := svc.ConfirmPaid(ctx, att.KriskrisID); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(fired) != 1 || fired[0] != seed.InvoiceID {
+		t.Fatalf("fired = %v", fired)
+	}
+	// Idempotent re-confirm: already-paid attempt returns before the hook.
+	if err := svc.ConfirmPaid(ctx, att.KriskrisID); err != nil {
+		t.Fatalf("re-confirm: %v", err)
+	}
+	if len(fired) != 1 {
+		t.Fatalf("fired twice: %v", fired)
+	}
+}

@@ -4,5 +4,6 @@ export type {
   PortalDue,
   PortalOnlineTime,
   PortalQuota,
+  PortalRemaining,
   PortalSummary,
 } from "../portal/api";

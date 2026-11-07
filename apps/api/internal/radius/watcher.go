@@ -16,8 +16,11 @@ const NotifyChannel = "radbill_events"
 // RunWatcher keeps the cache fresh until ctx is cancelled. On postgres it
 // LISTENs for row-level invalidations with a periodic full reload as
 // backup; on sqlite it only polls. It never touches the auth path.
-func RunWatcher(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache, cfg Config) {
-	go runPoller(ctx, log, db, cache, cfg.PollInterval())
+// usage may be nil; otherwise each poll tick also refreshes the usage
+// mirror's top-ups (billing has no per-row invalidation for them, so a
+// purchase takes effect within one poll interval).
+func RunWatcher(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache, cfg Config, usage *UsageMirror) {
+	go runPoller(ctx, log, db, cache, usage, cfg.PollInterval())
 	if cfg.DBDriver != "postgres" {
 		<-ctx.Done()
 		return
@@ -25,7 +28,7 @@ func RunWatcher(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache,
 	runListener(ctx, log, db, cache, cfg.DatabaseURL)
 }
 
-func runPoller(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache, interval time.Duration) {
+func runPoller(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache, usage *UsageMirror, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -39,6 +42,14 @@ func runPoller(ctx context.Context, log *slog.Logger, db *sql.DB, cache *Cache, 
 			if err != nil {
 				log.Warn("cache poll reload failed", "err", err)
 				continue
+			}
+			if usage != nil {
+				tctx, tcancel := context.WithTimeout(ctx, 30*time.Second)
+				terr := usage.RefreshTopups(tctx, db)
+				tcancel()
+				if terr != nil {
+					log.Warn("topup poll refresh failed", "err", terr)
+				}
 			}
 			accts, nas := cache.Counts()
 			log.Debug("cache poll reload ok", "accounts", accts, "nas", nas)

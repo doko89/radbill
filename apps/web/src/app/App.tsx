@@ -14,6 +14,7 @@ import { PppoeAccountsPage } from "../features/billing-pppoe-accounts/pages/Pppo
 import { NasPage } from "../features/billing-nas/pages/NasPage";
 import { SessionsPage } from "../features/billing-sessions/pages/SessionsPage";
 import { InvoicesPage } from "../features/billing-invoices/pages/InvoicesPage";
+import { ReportsPage } from "../features/billing-reports/pages/ReportsPage";
 import { BillingPermissions } from "../shared/lib/billing-permissions";
 import { Layout } from "../shared/ui/Layout";
 import { RequireAuth } from "../shared/ui/RequireAuth";
@@ -23,6 +24,7 @@ import { PortalLayout } from "../features/portal/components/PortalLayout";
 import { RequirePortal } from "../features/portal/components/RequirePortal";
 import { PortalLoginPage } from "../features/portal/pages/PortalLoginPage";
 import { PortalDashboardPage } from "../features/portal-dashboard/pages/DashboardPage";
+import { PortalPackagesPage } from "../features/portal-packages/pages/PackagesPage";
 import { PortalInvoicesPage } from "../features/portal-invoices/pages/InvoicesPage";
 import { PortalInvoiceDetailPage } from "../features/portal-invoices/pages/InvoiceDetailPage";
 import { PortalUsagePage } from "../features/portal-usage/pages/UsagePage";
@@ -57,6 +59,7 @@ export function App() {
                   }
                 >
                   <Route path="/portal" element={<PortalDashboardPage />} />
+                  <Route path="/portal/packages" element={<PortalPackagesPage />} />
                   <Route path="/portal/invoices" element={<PortalInvoicesPage />} />
                   <Route path="/portal/invoices/:id" element={<PortalInvoiceDetailPage />} />
                   <Route path="/portal/usage" element={<PortalUsagePage />} />
@@ -115,6 +118,14 @@ export function App() {
                     element={
                       <RequireBillingPermission anyOf={[BillingPermissions.invoicesRead]}>
                         <InvoicesPage />
+                      </RequireBillingPermission>
+                    }
+                  />
+                  <Route
+                    path="/admin/reports"
+                    element={
+                      <RequireBillingPermission anyOf={[BillingPermissions.reportsRead]}>
+                        <ReportsPage />
                       </RequireBillingPermission>
                     }
                   />

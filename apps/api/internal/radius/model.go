@@ -54,12 +54,13 @@ type Account struct {
 	ID         string
 	CustomerID string
 	PackageID  string
-	NASID      string // "" when NULL (NAS binding not enforced in Fase 1)
+	NASID      string // "" when NULL (no binding: any NAS may serve the account)
 	Username   string
 	Password   string // plaintext (product decision, PRD 5.2); never log
 	Status     string
 	ExpiresAt  string // "" when NULL, otherwise RFC3339
 	StaticIP   string // "" when NULL
+	CreatedAt  string // RFC3339 account creation (billing_cycle quota anchor)
 }
 
 // Package is one cached row of the packages table.
@@ -102,7 +103,7 @@ func scanAccount(rows *sql.Rows) (Account, error) {
 	var a Account
 	var nasID, expiresAt, staticIP sql.NullString
 	if err := rows.Scan(&a.ID, &a.CustomerID, &a.PackageID, &nasID, &a.Username,
-		&a.Password, &a.Status, &expiresAt, &staticIP); err != nil {
+		&a.Password, &a.Status, &expiresAt, &staticIP, &a.CreatedAt); err != nil {
 		return Account{}, fmt.Errorf("scan pppoe_accounts: %w", err)
 	}
 	a.NASID = nasID.String

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../../shared/lib/api";
 import { formatDate, formatDateTime, formatIDR } from "../../../shared/lib/billing-format";
@@ -29,10 +29,20 @@ function statusTone(status: string): "success" | "warning" | "default" {
   return "default";
 }
 
+/** Top-up / prorata mengarah ke sini dengan state `{autoPay:true}`. */
+function wantsAutoPay(state: unknown): boolean {
+  if (typeof state !== "object" || state === null) {
+    return false;
+  }
+  return (state as { autoPay?: unknown }).autoPay === true;
+}
+
 export function PortalInvoiceDetailPage() {
   const { id } = useParams();
+  const location = useLocation();
   const [paying, setPaying] = useState(false);
   const [channelDown, setChannelDown] = useState(false);
+  const autoOpened = useRef(false);
   const queryClient = useQueryClient();
 
   const detail = useQuery({
@@ -40,6 +50,14 @@ export function PortalInvoiceDetailPage() {
     queryFn: () => getPortalInvoice(id ?? ""),
     enabled: (id ?? "") !== "",
   });
+
+  const invoiceStatus = detail.data?.status;
+  useEffect(() => {
+    if (!autoOpened.current && wantsAutoPay(location.state) && invoiceStatus === "unpaid") {
+      autoOpened.current = true;
+      setPaying(true);
+    }
+  }, [invoiceStatus, location.state]);
 
   function onPaid(): void {
     setPaying(false);

@@ -78,6 +78,14 @@ func NewHandlerWithService(pool *sql.DB, svc *kriskrisapp.Service) *Handler {
 	return &Handler{pool: pool, svc: svc}
 }
 
+// SetPaidHook forwards the G3 apply-on-paid hook to the service (no-op
+// while the handler is unconfigured).
+func (h *Handler) SetPaidHook(hook func(ctx context.Context, invoiceID string)) {
+	if h.svc != nil {
+		h.svc.SetPaidHook(hook)
+	}
+}
+
 // PayInvoice creates a QR attempt for invoice :id: {data:{attempt_id,
 // qr_payload, expires_at, amount, base_amount, unique_code, message}}.
 func (h *Handler) PayInvoice(c fiber.Ctx) error {

@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS radius_sessions (
     nas_id TEXT NOT NULL, framed_ip TEXT, started_at TEXT NOT NULL, stopped_at TEXT,
     bytes_in BIGINT NOT NULL DEFAULT 0, bytes_out BIGINT NOT NULL DEFAULT 0,
     terminate_cause TEXT, updated_at TEXT NOT NULL,
-    UNIQUE (session_id, nas_id));`
+    UNIQUE (session_id, nas_id));
+CREATE TABLE IF NOT EXISTS quota_topups (
+    id TEXT PRIMARY KEY, pppoe_account_id TEXT NOT NULL, bytes BIGINT NOT NULL,
+    period_start TEXT NOT NULL, invoice_id TEXT NOT NULL,
+    created_at TEXT NOT NULL);`
 
 // openTestDB opens a shared :memory: sqlite DB with the test schema. The
 // sqlite driver may be unavailable in some sandboxes; callers skip then.

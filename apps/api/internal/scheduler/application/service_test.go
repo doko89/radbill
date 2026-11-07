@@ -383,3 +383,43 @@ func TestRunOnceRecordsFailure(t *testing.T) {
 		}
 	}
 }
+
+// fakePlanApplier records G3 downgrade-applier runs.
+type fakePlanApplier struct {
+	runs    int
+	applied int
+	err     error
+}
+
+func (f *fakePlanApplier) ApplyPlanChangesDue(_ context.Context, _ time.Time) (int, error) {
+	f.runs++
+	return f.applied, f.err
+}
+
+// TestPlanChangesApplier is the G3 additive assertion: the downgrade
+// applier runs inside RunOnce without changing the 2-job Snapshot, its
+// errors never fail the tick, and the nil default is a no-op.
+func TestPlanChangesApplier(t *testing.T) {
+	h := newHarness(t, activationCfg())
+	if n, err := h.svc.ApplyPlanChanges(context.Background()); n != 0 || err != nil {
+		t.Fatalf("nil applier = %d %v", n, err)
+	}
+	applier := &fakePlanApplier{applied: 2}
+	h.svc.SetPlanChangeApplier(applier)
+	if err := h.svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if applier.runs != 1 {
+		t.Fatalf("runs = %d", applier.runs)
+	}
+	if st := h.svc.Status(); len(st) != 2 {
+		t.Fatalf("status = %+v", st)
+	}
+	applier.err = errors.New("plan store down")
+	if err := h.svc.RunOnce(context.Background()); err != nil {
+		t.Fatalf("applier error failed tick: %v", err)
+	}
+	if applier.runs != 2 {
+		t.Fatalf("runs = %d", applier.runs)
+	}
+}

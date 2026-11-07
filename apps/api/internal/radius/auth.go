@@ -51,6 +51,7 @@ func sourceIP(addr net.Addr) string {
 type AuthServer struct {
 	Cache *Cache
 	Log   *slog.Logger
+	Usage *UsageMirror     // nil = treat every account as fresh (full quota/time)
 	Now   func() time.Time // overridable clock (tests); nil = time.Now
 }
 
@@ -103,9 +104,15 @@ func (s *AuthServer) ServeRADIUS(w lradius.ResponseWriter, r *lradius.Request) {
 
 	acct, _ := s.Cache.Account(username)
 	pkg, _ := s.Cache.Package(acct.PackageID)
+	var snap UsageSnapshot
+	if pkg != nil && s.Usage != nil {
+		snap = s.Usage.Snapshot(acct.ID, pkg.QuotaReset, acct.CreatedAt, s.now()).Snapshot()
+	}
 	decision := decideAuth(AuthInput{
 		Account:           acct,
 		Package:           pkg,
+		NASID:             nas.ID,
+		Usage:             snap,
 		InterimInterval:   s.Cache.InterimInterval(),
 		IsolirRateLimit:   s.Cache.Setting(SettingIsolirRateLimit, DefaultIsolirRateLimit),
 		IsolirAddressList: s.Cache.Setting(SettingIsolirAddressList, DefaultIsolirAddressList),
@@ -125,7 +132,8 @@ func (s *AuthServer) ServeRADIUS(w lradius.ResponseWriter, r *lradius.Request) {
 		s.Log.Warn("auth accept: write failed", "user", username, "nas", nas.Name, "err", err)
 		return
 	}
-	s.Log.Debug("auth accept", "user", username, "nas", nas.Name, "method", method, "isolated", decision.Isolated)
+	s.Log.Debug("auth accept", "user", username, "nas", nas.Name, "method", method,
+		"isolated", decision.Isolated, "throttled", decision.Throttled)
 }
 
 func (s *AuthServer) writeReject(w lradius.ResponseWriter, r *lradius.Request, nas *NAS, username, reason string) {

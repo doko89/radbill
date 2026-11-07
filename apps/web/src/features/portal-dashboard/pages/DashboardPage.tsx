@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { ApiError } from "../../../shared/lib/api";
 import { formatBytes, formatDate, formatDuration, formatIDR } from "../../../shared/lib/billing-format";
 import { Badge, Button, Card, EmptyState, FormAlert, PageHeader } from "../../../shared/ui/billing-ui";
+import { TopupDialog } from "../../portal/components/TopupDialog";
 import { getPortalSummary } from "../api";
 import type { PortalAccount } from "../api";
 import { QuotaMeter } from "../components/QuotaMeter";
@@ -31,7 +33,24 @@ function statusLabel(status: string): string {
   return status;
 }
 
-function AccountCard({ account, isDefault }: { account: PortalAccount; isDefault: boolean }) {
+function AccountCard({
+  account,
+  isDefault,
+  onTopup,
+}: {
+  account: PortalAccount;
+  isDefault: boolean;
+  onTopup: (accountId: string) => void;
+}) {
+  const remaining = account.remaining ?? null;
+  const quotaLimit = remaining?.quota_bytes ?? null;
+  const quotaUsed = remaining?.quota_used ?? null;
+  const quotaLeft = quotaLimit !== null && quotaUsed !== null ? Math.max(0, quotaLimit - quotaUsed) : null;
+  const timeLimit = remaining?.online_seconds ?? null;
+  const timeUsed = remaining?.online_used ?? null;
+  const timeLeft = timeLimit !== null && timeUsed !== null ? Math.max(0, timeLimit - timeUsed) : null;
+  const quotaPackage =
+    account.package.quota_bytes !== null && account.package.quota_bytes !== undefined;
   return (
     <Card className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -45,12 +64,52 @@ function AccountCard({ account, isDefault }: { account: PortalAccount; isDefault
       <p className="m-0 text-sm text-slate-500">
         Masa aktif: <span className="font-semibold text-slate-800">{formatDate(account.expires_at)}</span>
       </p>
+      {remaining !== null && quotaUsed !== null && (
+        <div className="border-t border-slate-100 pt-2">
+          <QuotaMeter
+            label={`Sisa kuota ${account.username}`}
+            usedLabel={formatBytes(quotaUsed)}
+            totalLabel={formatBytes(quotaLimit)}
+            remainingLabel={formatBytes(quotaLeft)}
+            used={quotaUsed}
+            limit={quotaLimit}
+            remaining={quotaLeft}
+          />
+        </div>
+      )}
+      {remaining !== null && timeUsed !== null && (
+        <div className="border-t border-slate-100 pt-2">
+          <QuotaMeter
+            label={`Sisa waktu ${account.username}`}
+            usedLabel={formatDuration(timeUsed)}
+            totalLabel={formatDuration(timeLimit)}
+            remainingLabel={formatDuration(timeLeft)}
+            used={timeUsed}
+            limit={timeLimit}
+            remaining={timeLeft}
+          />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 pt-1">
+        {quotaPackage && (
+          <Button variant="secondary" size="sm" onClick={() => onTopup(account.id)}>
+            Top-Up kuota
+          </Button>
+        )}
+        <Link
+          to="/portal/packages"
+          className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 no-underline hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+        >
+          Kelola paket
+        </Link>
+      </div>
     </Card>
   );
 }
 
 export function PortalDashboardPage() {
   const summary = useQuery({ queryKey: ["portal", "summary"], queryFn: getPortalSummary });
+  const [topupAccountId, setTopupAccountId] = useState<string | null>(null);
 
   return (
     <div>
@@ -91,6 +150,7 @@ export function PortalDashboardPage() {
                   key={account.id}
                   account={account}
                   isDefault={account.id === summary.data?.default_account_id}
+                  onTopup={setTopupAccountId}
                 />
               ))}
             </section>
@@ -151,6 +211,13 @@ export function PortalDashboardPage() {
             )}
           </Card>
         </div>
+      )}
+      {topupAccountId !== null && summary.data && (
+        <TopupDialog
+          accounts={summary.data.accounts}
+          defaultAccountId={topupAccountId}
+          onClose={() => setTopupAccountId(null)}
+        />
       )}
     </div>
   );

@@ -17,9 +17,9 @@ const (
 	qListNAS = `SELECT id, name, ip, secret, coa_port FROM nas`
 	qGetNAS  = `SELECT id, name, ip, secret, coa_port FROM nas WHERE id = $1`
 
-	qListAccounts = `SELECT id, customer_id, package_id, nas_id, username, password, status, expires_at, static_ip
+	qListAccounts = `SELECT id, customer_id, package_id, nas_id, username, password, status, expires_at, static_ip, created_at
 		FROM pppoe_accounts WHERE status IN ('active', 'isolated')`
-	qGetAccount = `SELECT id, customer_id, package_id, nas_id, username, password, status, expires_at, static_ip
+	qGetAccount = `SELECT id, customer_id, package_id, nas_id, username, password, status, expires_at, static_ip, created_at
 		FROM pppoe_accounts WHERE id = $1`
 
 	qListPackages = `SELECT id, name, price, period, rate_limit, address_pool, validity_seconds,

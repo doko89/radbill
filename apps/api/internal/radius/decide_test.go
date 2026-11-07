@@ -138,13 +138,22 @@ func TestDecideAuth(t *testing.T) {
 			},
 		},
 		{
-			name: "expired with throttle policy falls back to isolate (Fase 1)",
+			// G3 change (was: throttle fell back to isolate in Fase 1):
+			// throttle now accepts at the degraded rate with no caps and
+			// no address-list.
+			name: "expired with throttle policy accepts throttled",
 			acct: &Account{ID: "a", Username: "u", Status: StatusActive, ExpiresAt: past},
-			pkg:  &Package{ID: "p1", OnExhausted: OnExhaustedThrottle},
+			pkg:  &Package{ID: "p1", OnExhausted: OnExhaustedThrottle, FUPRateLimit: "1M/1M"},
 			check: func(t *testing.T, d AuthDecision) {
 				t.Helper()
-				if !d.Accept || !d.Isolated {
-					t.Fatalf("got %+v, want isolated accept", d)
+				if !d.Accept || d.Isolated || !d.Throttled {
+					t.Fatalf("got %+v, want throttled accept", d)
+				}
+				if d.RateLimit != "1M/1M" || d.AddressList != "" {
+					t.Fatalf("got %+v, want FUP rate without address-list", d)
+				}
+				if d.HasSessionTimeout || d.HasTotalLimit {
+					t.Fatalf("got %+v, want no caps on throttled accept", d)
 				}
 			},
 		},

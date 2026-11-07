@@ -48,6 +48,8 @@ type Service struct {
 	store  *kriskrisinfra.Store
 	client *kriskrisinfra.Client
 	config kriskrisinfra.Config
+	// paidHook is the G3 apply-on-paid hook (nil = Fase 2 behavior).
+	paidHook func(ctx context.Context, invoiceID string)
 
 	now          func() time.Time
 	sleep        func(time.Duration)
@@ -90,6 +92,13 @@ func (s *Service) SetSleep(sleep func(time.Duration)) { s.sleep = sleep }
 
 // SetAsyncTimeout overrides the webhook background-processing timeout.
 func (s *Service) SetAsyncTimeout(d time.Duration) { s.asyncTimeout = d }
+
+// SetPaidHook installs the G3 apply-on-paid hook (nil = Fase 2 behavior).
+// The hook fires after a confirmed payment commits; it must be idempotent
+// and must never fail the confirmation (fire-and-log at the call site).
+func (s *Service) SetPaidHook(hook func(ctx context.Context, invoiceID string)) {
+	s.paidHook = hook
+}
 
 // AsyncTimeout returns the webhook background-processing timeout.
 func (s *Service) AsyncTimeout() time.Duration { return s.asyncTimeout }
@@ -283,6 +292,10 @@ func (s *Service) ConfirmPaid(ctx context.Context, kriskrisID string) error {
 		return fmt.Errorf("%w: attempt %d, remote %d", kriskrisinfra.ErrAmountMismatch, att.Amount, remote.Amount)
 	}
 	_, err = s.store.ApplyPaidTx(ctx, att.ID, remote.Amount, s.now().UTC())
+	// G3 (agen D2, ADITIF): top-up apply-on-paid (best-effort, idempotent).
+	if err == nil && s.paidHook != nil {
+		s.paidHook(ctx, att.InvoiceID)
+	}
 	return err
 }
 

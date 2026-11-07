@@ -17,7 +17,8 @@ import {
   THead,
   TR,
 } from "../../../shared/ui/billing-ui";
-import { listPortalInvoices } from "../api";
+import { TopupDialog } from "../../portal/components/TopupDialog";
+import { getPortalSummary, listPortalInvoices } from "../api";
 import type { PortalInvoice } from "../api";
 import { PayDialog } from "../components/PayDialog";
 
@@ -35,12 +36,18 @@ export function PortalInvoicesPage() {
   const [status, setStatus] = useState("");
   const [paying, setPaying] = useState<PortalInvoice | null>(null);
   const [channelDown, setChannelDown] = useState(false);
+  const [topupOpen, setTopupOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const list = useQuery({
     queryKey: ["portal", "invoices", status],
     queryFn: () => listPortalInvoices(status === "" ? undefined : status),
   });
+  const summary = useQuery({ queryKey: ["portal", "summary"], queryFn: getPortalSummary });
+  const hasQuotaAccount =
+    summary.data?.accounts.some(
+      (account) => account.package.quota_bytes !== null && account.package.quota_bytes !== undefined,
+    ) ?? false;
 
   function onPaid(): void {
     setPaying(null);
@@ -50,7 +57,17 @@ export function PortalInvoicesPage() {
 
   return (
     <div>
-      <PageHeader title="Tagihan" description="Tagihan dan riwayat pembayaran Anda." />
+      <PageHeader
+        title="Tagihan"
+        description="Tagihan dan riwayat pembayaran Anda."
+        actions={
+          hasQuotaAccount ? (
+            <Button size="sm" variant="secondary" onClick={() => setTopupOpen(true)}>
+              Top-Up kuota
+            </Button>
+          ) : null
+        }
+      />
       {channelDown && (
         <div className="mb-4" role="alert">
           <FormAlert message="Pembayaran QRIS sedang tidak tersedia. Silakan bayar manual (tunai/transfer) lalu konfirmasi ke admin." />
@@ -153,6 +170,13 @@ export function PortalInvoicesPage() {
             setPaying(null);
             setChannelDown(true);
           }}
+        />
+      )}
+      {topupOpen && summary.data && (
+        <TopupDialog
+          accounts={summary.data.accounts}
+          defaultAccountId={summary.data.default_account_id}
+          onClose={() => setTopupOpen(false)}
         />
       )}
     </div>

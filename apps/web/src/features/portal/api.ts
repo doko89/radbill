@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "../../shared/lib/api";
 import { billingRequest, withQuery } from "../../shared/lib/billing-api";
+import { firstNumber, firstText } from "../../shared/lib/billing-format";
 
 /**
  * Portal pelanggan (agen C3, G2): kontrak API + skema zod + fetcher.
@@ -14,6 +15,15 @@ import { billingRequest, withQuery } from "../../shared/lib/billing-api";
  * - GET /api/v1/portal/invoices?status= → {data: PortalInvoice[], total}
  * - GET /api/v1/portal/invoices/:id → {data: PortalInvoiceDetail}
  * - GET /api/v1/portal/usage?days= → {data: PortalUsage}
+ *
+ * Kontrak G3/D2 (agen G3, top-up + ganti paket, didikte):
+ * - POST /api/v1/portal/topup {pppoe_account_id, bytes} → {data:{invoice}}
+ * - POST /api/v1/portal/plan-changes {pppoe_account_id, to_package_id}
+ * - GET /api/v1/portal/plan-changes → {data:[...]}
+ * - POST /api/v1/portal/plan-changes/:id/cancel → {data:{...}}
+ * - Summary: tiap akun membawa `remaining` opsional (field lama utuh).
+ * - ASUMSI: GET /api/v1/portal/packages → {data:[...],total} (D2
+ *   menambahkan; bila 404, UI paket menampilkan fallback hubungi admin).
  *
  * ASUMSI kontrak milik C1/C2 (belum final saat G2 ditulis; samakan saat
  * integrasi, lihat laporan agen):
@@ -49,8 +59,21 @@ export const portalPackageSchema = z.object({
   quota_bytes: z.number().nullable(),
   online_seconds_limit: z.number().nullable(),
   validity_seconds: z.number().nullable(),
+  // Opsional (G3): bila D2 menambahkannya ke summary, dipakai untuk
+  // menentukan upgrade_group paket aktif. Absen = undefined, aman.
+  allow_self_service: z.boolean().nullish(),
+  upgrade_group: z.string().nullish(),
 });
 export type PortalPackage = z.infer<typeof portalPackageSchema>;
+
+/** Sisa jatah per akun (G3, ADITIF: field lama summary utuh). */
+export const portalRemainingSchema = z.object({
+  quota_bytes: z.number().nullable(),
+  quota_used: z.number(),
+  online_seconds: z.number().nullable(),
+  online_used: z.number(),
+});
+export type PortalRemaining = z.infer<typeof portalRemainingSchema>;
 
 export const portalAccountSchema = z.object({
   id: z.string(),
@@ -58,6 +81,8 @@ export const portalAccountSchema = z.object({
   status: z.string(),
   expires_at: z.string().nullable(),
   package: portalPackageSchema,
+  // `.nullish()` agar ringkasan backend lama (tanpa `remaining`) tetap lolos parse.
+  remaining: portalRemainingSchema.nullish(),
 });
 export type PortalAccount = z.infer<typeof portalAccountSchema>;
 
@@ -260,6 +285,158 @@ export function isPayChannelDown(err: unknown): boolean {
     return false;
   }
   return err.code !== undefined && PAY_CHANNEL_DOWN_CODES.includes(err.code);
+}
+
+// --- top-up kuota (G3, kontrak D2 didikte) ---
+//
+// POST /api/v1/portal/topup {pppoe_account_id, bytes} → 201
+// {data:{invoice:{id,number,total}}}; bytes ∈ {1 GB, 5 GB, 10 GB}.
+
+export const TOPUP_PRESETS_BYTES = [1073741824, 5368709120, 10737418240] as const;
+export type TopupPresetBytes = (typeof TOPUP_PRESETS_BYTES)[number];
+
+export const topupInvoiceSchema = z.object({
+  id: z.string(),
+  number: z.string(),
+  total: z.number(),
+});
+export type TopupInvoice = z.infer<typeof topupInvoiceSchema>;
+
+const topupEnvelope = z.object({ data: z.object({ invoice: topupInvoiceSchema }) });
+
+export async function createPortalTopup(input: {
+  pppoe_account_id: string;
+  bytes: number;
+}): Promise<TopupInvoice> {
+  const raw: unknown = await billingRequest("/api/v1/portal/topup", {
+    method: "POST",
+    body: { pppoe_account_id: input.pppoe_account_id, bytes: input.bytes },
+  });
+  return topupEnvelope.parse(raw).data.invoice;
+}
+
+// --- ganti paket mandiri (G3, kontrak D2 didikte) ---
+//
+// POST /api/v1/portal/plan-changes {pppoe_account_id,to_package_id}
+//   → {data:{status,effective_at,prorata_invoice_id?}} (409 bila tunggakan/tak layak)
+// GET /api/v1/portal/plan-changes → {data:[...]}
+// POST /api/v1/portal/plan-changes/:id/cancel → {data:{...}}
+//
+// Bentuk item riwayat tidak didikte penuh: skema di bawah hanya mewajibkan
+// `id` + `status`, sisanya opsional + toleran alias (from_package vs
+// from_package_id/name, dst.) agar tidak pecah saat field D2 sedikit beda.
+
+export const planChangeSchema = z.object({
+  id: z.string(),
+  pppoe_account_id: z.string().nullish(),
+  pppoe_username: z.string().nullish(),
+  from_package: z.string().nullish(),
+  from_package_id: z.string().nullish(),
+  from_package_name: z.string().nullish(),
+  to_package: z.string().nullish(),
+  to_package_id: z.string().nullish(),
+  to_package_name: z.string().nullish(),
+  status: z.string(),
+  effective_at: z.string().nullish(),
+  prorata_invoice_id: z.string().nullish(),
+  created_at: z.string().nullish(),
+});
+export type PortalPlanChange = z.infer<typeof planChangeSchema>;
+
+export function planChangeFromLabel(change: PortalPlanChange): string {
+  return firstText(
+    change.from_package_name,
+    change.from_package,
+    change.from_package_id,
+    change.pppoe_username,
+  );
+}
+
+export function planChangeToLabel(change: PortalPlanChange): string {
+  return firstText(change.to_package_name, change.to_package, change.to_package_id);
+}
+
+const planChangeListEnvelope = z.object({ data: z.array(planChangeSchema) });
+
+export async function listPortalPlanChanges(): Promise<PortalPlanChange[]> {
+  const raw: unknown = await billingRequest("/api/v1/portal/plan-changes");
+  return planChangeListEnvelope.parse(raw).data;
+}
+
+export const planChangeResultSchema = z.object({
+  id: z.string().nullish(),
+  status: z.string(),
+  effective_at: z.string().nullish(),
+  prorata_invoice_id: z.string().nullish(),
+});
+export type PortalPlanChangeResult = z.infer<typeof planChangeResultSchema>;
+
+const planChangeResultEnvelope = z.object({ data: planChangeResultSchema });
+
+export async function createPortalPlanChange(input: {
+  pppoe_account_id: string;
+  to_package_id: string;
+}): Promise<PortalPlanChangeResult> {
+  const raw: unknown = await billingRequest("/api/v1/portal/plan-changes", {
+    method: "POST",
+    body: { pppoe_account_id: input.pppoe_account_id, to_package_id: input.to_package_id },
+  });
+  return planChangeResultEnvelope.parse(raw).data;
+}
+
+const planChangeCancelEnvelope = z.object({ data: planChangeResultSchema.partial() });
+export type PortalPlanChangeCancelResult = z.infer<typeof planChangeCancelEnvelope>["data"];
+
+export async function cancelPortalPlanChange(id: string): Promise<PortalPlanChangeCancelResult> {
+  const raw: unknown = await billingRequest(`/api/v1/portal/plan-changes/${id}/cancel`, {
+    method: "POST",
+    body: {},
+  });
+  return planChangeCancelEnvelope.parse(raw).data;
+}
+
+// --- daftar paket publik untuk self-service (G3, ASUMSI endpoint D2) ---
+//
+// GET /api/v1/portal/packages → {data:[...],total}. Endpoint ini BELUM ADA
+// saat G3 ditulis; D2 menambahkan endpoint kecil ini. Bila 404 saat
+// integrasi, halaman paket menampilkan fallback "hubungi admin" (tidak crash).
+
+export const portalPublicPackageSchema = z.object({
+  id: z.string(),
+  name: z.string().nullish(),
+  nama: z.string().nullish(),
+  price: z.number().nullish(),
+  harga: z.number().nullish(),
+  rate_limit: z.string().nullish(),
+  quota_bytes: z.number().nullish(),
+  online_seconds_limit: z.number().nullish(),
+  validity_seconds: z.number().nullish(),
+  allow_self_service: z.boolean().nullish(),
+  upgrade_group: z.string().nullish(),
+});
+export type PortalPublicPackage = z.infer<typeof portalPublicPackageSchema>;
+
+export function portalPublicPackageName(pkg: PortalPublicPackage): string {
+  return firstText(pkg.nama, pkg.name, pkg.id);
+}
+
+export function portalPublicPackagePrice(pkg: PortalPublicPackage): number | null {
+  return firstNumber(pkg.harga, pkg.price);
+}
+
+const portalPackageListEnvelope = z.object({
+  data: z.array(portalPublicPackageSchema),
+  total: z.number(),
+});
+
+export type PortalPackageList = {
+  data: PortalPublicPackage[];
+  total: number;
+};
+
+export async function listPortalPackages(): Promise<PortalPackageList> {
+  const raw: unknown = await billingRequest("/api/v1/portal/packages");
+  return portalPackageListEnvelope.parse(raw);
 }
 
 // --- ganti password (ASUMSI endpoint C1) ---

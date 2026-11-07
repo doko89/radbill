@@ -5,6 +5,7 @@ import (
 	"time"
 
 	billapp "boilerplate/api/internal/billing/application"
+	planchangesapp "boilerplate/api/internal/planchanges/application"
 	pppoedomain "boilerplate/api/internal/pppoe/domain"
 	pppoeinfra "boilerplate/api/internal/pppoe/infrastructure"
 	scheddomain "boilerplate/api/internal/scheduler/domain"
@@ -86,4 +87,20 @@ func (a *ConfigAdapter) BillingConfig(ctx context.Context) (scheddomain.BillingC
 	return scheddomain.BillingConfig{
 		Mode: t.BillingCycleMode, Day: t.BillingCycleDay, Grace: t.GraceDays, Company: t.CompanyName,
 	}, nil
+}
+
+// PlanChangesAdapter implements application.PlanChangeApplier on top of
+// the planchanges context service (G3, ADITIF).
+type PlanChangesAdapter struct {
+	svc *planchangesapp.Service
+}
+
+// NewPlanChangesAdapter builds a PlanChangesAdapter.
+func NewPlanChangesAdapter(svc *planchangesapp.Service) *PlanChangesAdapter {
+	return &PlanChangesAdapter{svc: svc}
+}
+
+// ApplyPlanChangesDue applies every due downgrade.
+func (a *PlanChangesAdapter) ApplyPlanChangesDue(ctx context.Context, now time.Time) (int, error) {
+	return a.svc.ApplyDue(ctx, now)
 }

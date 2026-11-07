@@ -93,8 +93,15 @@ func seedPortal(t *testing.T, pool *sql.DB) {
 		('att-a1-old', 'inv-a1', 'kk-0', 50000, 11, 50011, 'EMV-OLD', 'expired', $1, $3, $3)`,
 		now.Add(15*time.Minute).Format(time.RFC3339), ts, now.Add(-time.Hour).Format(time.RFC3339))
 	// Sessions: a1 has two on D-1 and one on D-3; b1 has a huge one on D-1 (must not leak).
-	day1 := now.AddDate(0, 0, -1)
-	day3 := now.AddDate(0, 0, -3)
+	// UTC-noon anchors (G3 fix): the +hour offsets below must never cross
+	// a UTC midnight, whatever hour the suite runs at. Previously day1
+	// kept the current time-of-day, so runs at >=14:00 UTC pushed rs-2
+	// into the next UTC day and TestUsageAggregation failed (production
+	// buckets by UTC day of started_at, which is correct; only the seed
+	// was time-dependent). Labels in the test use the same UTC dates.
+	noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+	day1 := noon.AddDate(0, 0, -1)
+	day3 := noon.AddDate(0, 0, -3)
 	s := func(id, acc string, start time.Time, dur time.Duration, in, out int64, stopped bool) {
 		t.Helper()
 		stop := ""
@@ -461,6 +468,73 @@ func TestNoPasswordLeak(t *testing.T) {
 			if strings.Contains(string(body), secret) {
 				t.Fatalf("%s leaks %q", path, secret)
 			}
+		}
+	}
+}
+
+// TestSummaryRemaining is the G3 additive assertion: per-account remaining
+// (quota incl. top-ups, online time) in the current bucket. The G2 seed
+// has no quota_topups table, so this test creates it (old tests keep
+// running without it and must still see Remaining omitted, not an error).
+func TestSummaryRemaining(t *testing.T) {
+	pool := openSeededDB(t)
+	now := time.Now().UTC()
+	bucket := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	exec(`CREATE TABLE quota_topups (id TEXT PRIMARY KEY, pppoe_account_id TEXT NOT NULL,
+		bytes BIGINT NOT NULL, period_start TEXT NOT NULL, invoice_id TEXT, created_at TEXT NOT NULL)`)
+	exec(`INSERT INTO quota_topups (id, pppoe_account_id, bytes, period_start, created_at)
+		VALUES ('t1', 'acc-a1', 5368709120, $1, $2)`, bucket, now.Format(time.RFC3339))
+	exec(`INSERT INTO usage_counters (pppoe_account_id, period_start, bytes_in, bytes_out, online_seconds)
+		VALUES ('acc-a1', $1, 1000000000, 2000000000, 100)`, bucket)
+
+	code, body := doGet(t, testApp(pool, strptr("cust-a")), "/api/v1/portal/summary")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", code, body)
+	}
+	var sum SummaryDTO
+	decodeData(t, body, &sum)
+	rem := sum.Accounts[0].Remaining
+	if rem == nil {
+		t.Fatal("acc-a1 remaining is nil")
+	}
+	if rem.QuotaBytes == nil || *rem.QuotaBytes != 10000000000+5368709120 {
+		t.Fatalf("quota_bytes = %+v", rem.QuotaBytes)
+	}
+	if rem.QuotaUsed != 3000000000 || rem.OnlineUsed != 100 {
+		t.Fatalf("used = %+v", rem)
+	}
+	if rem.OnlineSeconds == nil || *rem.OnlineSeconds != 36000 {
+		t.Fatalf("online_seconds = %+v", rem.OnlineSeconds)
+	}
+	// acc-a2 has no bucket rows: limits present, usage zero.
+	rem2 := sum.Accounts[1].Remaining
+	if rem2 == nil || rem2.QuotaBytes == nil || *rem2.QuotaBytes != 10000000000 {
+		t.Fatalf("acc-a2 = %+v", rem2)
+	}
+	if rem2.QuotaUsed != 0 || rem2.OnlineUsed != 0 {
+		t.Fatalf("acc-a2 used = %+v", rem2)
+	}
+}
+
+// TestSummaryRemainingAbsentWithoutTable pins the G2 back-compat path:
+// databases without quota_topups still get 200 with Remaining omitted.
+func TestSummaryRemainingAbsentWithoutTable(t *testing.T) {
+	pool := openSeededDB(t)
+	code, body := doGet(t, testApp(pool, strptr("cust-a")), "/api/v1/portal/summary")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", code, body)
+	}
+	var sum SummaryDTO
+	decodeData(t, body, &sum)
+	for _, a := range sum.Accounts {
+		if a.Remaining != nil {
+			t.Fatalf("%s remaining = %+v, want nil", a.Username, a.Remaining)
 		}
 	}
 }
