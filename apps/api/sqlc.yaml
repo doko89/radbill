@@ -1,0 +1,11 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "db/queries"
+    schema: "internal/platform/db/schema.sql"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "internal/platform/db/sqlcgen"
+        emit_json_tags: true
+        emit_empty_slices: true

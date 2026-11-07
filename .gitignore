@@ -1,0 +1,10 @@
+.env
+bin/
+data/
+node_modules/
+apps/web/dist/
+apps/api/data/
+apps/api/web/dist/assets/
+apps/api/web/dist/index.html
+*.db
+.DS_Store
