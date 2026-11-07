@@ -18,6 +18,18 @@ type Account struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
+type AuditLog struct {
+	ID            string         `json:"id"`
+	ActorID       sql.NullString `json:"actor_id"`
+	ActorUsername string         `json:"actor_username"`
+	Action        string         `json:"action"`
+	TargetType    string         `json:"target_type"`
+	TargetID      string         `json:"target_id"`
+	Detail        string         `json:"detail"`
+	Ip            string         `json:"ip"`
+	CreatedAt     string         `json:"created_at"`
+}
+
 type Customer struct {
 	ID        string         `json:"id"`
 	AccountID sql.NullString `json:"account_id"`

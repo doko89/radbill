@@ -3,10 +3,15 @@ package presentation
 
 import (
 	"errors"
+	"log"
+	"slices"
 	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditdomain "boilerplate/api/internal/audit/domain"
+	authpres "boilerplate/api/internal/jwtauth/presentation"
 	setapp "boilerplate/api/internal/settings/application"
 	"boilerplate/api/internal/shared/apperr"
 )
@@ -14,11 +19,49 @@ import (
 // Handler serves /api/v1/admin/settings endpoints.
 type Handler struct {
 	svc *setapp.Service
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler.
 func NewHandler(svc *setapp.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetAuditor installs the G4 audit sink (Fase 4, ADITIF).
+func (h *Handler) SetAuditor(a *auditapp.Service) { h.audit = a }
+
+// auditLog records one best-effort entry: failures are logged, the
+// request still succeeds. Only key names are logged, never values
+// (several settings hold secrets).
+func (h *Handler) auditLog(c fiber.Ctx, action, detail string) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Log(c.Context(), auditapp.LogInput{
+		ActorID: authpres.Subject(c), Action: action,
+		TargetType: auditdomain.TargetSettings,
+		Detail:     detail, IP: c.IP(),
+	}); err != nil {
+		log.Printf("audit: log %s failed: %v", action, err)
+	}
+}
+
+// auditKeys renders the updated key names in stable order.
+func auditKeys(vals map[string]string) string {
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	out := "keys="
+	for i, k := range keys {
+		if i > 0 {
+			out += ","
+		}
+		out += k
+	}
+	return out
 }
 
 // List returns all settings as {data:{key:value}} with secrets masked.
@@ -49,6 +92,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionSettingsUpdated, auditKeys(vals))
 	return c.JSON(fiber.Map{"data": out})
 }
 

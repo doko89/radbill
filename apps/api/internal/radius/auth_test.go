@@ -296,3 +296,34 @@ func TestAuthUDP(t *testing.T) {
 		t.Fatalf("got %v, want Access-Accept", resp.Code)
 	}
 }
+
+// TestAuthG4Metrics is the Fase 4 additive check (agen E1): accepts and
+// rejects increment the Metrics counters; silent drops (unknown NAS,
+// non-Access-Request) count neither; a nil Metrics stays safe.
+func TestAuthG4Metrics(t *testing.T) {
+	m := &Metrics{}
+	srv := &AuthServer{Cache: testCache(), Log: slog.New(slog.DiscardHandler), Metrics: m}
+	serve := func(pkt *lradius.Packet, ip string) *lradius.Packet {
+		cw := &captureWriter{}
+		srv.ServeRADIUS(cw, testRequest(pkt, ip))
+		return cw.got
+	}
+	if got := serve(papPacket(t, "alice", "alicepw"), testNASIP); got == nil || got.Code != lradius.CodeAccessAccept {
+		t.Fatalf("accept = %+v, want Access-Accept", got)
+	}
+	if got := serve(papPacket(t, "alice", "wrongpw"), testNASIP); got == nil || got.Code != lradius.CodeAccessReject {
+		t.Fatalf("reject = %+v, want Access-Reject", got)
+	}
+	serve(papPacket(t, "alice", "alicepw"), "10.9.9.9") // unknown NAS: drop
+	serve(lradius.New(lradius.CodeAccountingRequest, []byte(testNASSecret)), testNASIP)
+	if m.AuthAccepts() != 1 || m.AuthRejects() != 1 {
+		t.Fatalf("accepts=%d rejects=%d, want 1/1", m.AuthAccepts(), m.AuthRejects())
+	}
+	// Nil metrics: identical decisions, no counting, no panic.
+	plain := &AuthServer{Cache: testCache(), Log: slog.New(slog.DiscardHandler)}
+	cw := &captureWriter{}
+	plain.ServeRADIUS(cw, testRequest(papPacket(t, "alice", "alicepw"), testNASIP))
+	if cw.got == nil || cw.got.Code != lradius.CodeAccessAccept {
+		t.Fatalf("nil-metrics accept = %+v", cw.got)
+	}
+}

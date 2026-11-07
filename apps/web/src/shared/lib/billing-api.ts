@@ -216,3 +216,69 @@ export function withQuery(
   const text = query.toString();
   return text.length > 0 ? `${path}?${text}` : path;
 }
+
+function csvFilenameFromDisposition(header: string | null, fallback: string): string {
+  if (header) {
+    const match = /filename="?([^";]+)"?/.exec(header);
+    const name = match?.[1]?.trim();
+    if (name) {
+      return name;
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Unduh CSV mentah (G4): fetch langsung dengan Bearer + cookies, satu kali
+ * refresh saat 401, lalu simpan sebagai blob. Nama file mengikuti header
+ * `Content-Disposition` bila ada, atau `fallbackFilename`.
+ */
+export async function billingDownloadCsv(path: string, fallbackFilename: string): Promise<void> {
+  async function fetchCsv(authRetried: boolean): Promise<Response> {
+    const headers: Record<string, string> = {};
+    const token = getBillingAccessToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    let res: Response;
+    try {
+      res = await fetch(path, { method: "GET", headers, credentials: "include" });
+    } catch {
+      throw new ApiError(0, "tidak dapat terhubung ke server");
+    }
+    if (res.status === 401 && !authRetried) {
+      const fresh = await refreshBillingAccessToken();
+      if (fresh) {
+        return fetchCsv(true);
+      }
+      throw new ApiError(401, "sesi berakhir, silakan masuk kembali");
+    }
+    return res;
+  }
+
+  const res = await fetchCsv(false);
+  if (!res.ok) {
+    let data: unknown = null;
+    try {
+      data = (await res.json()) as unknown;
+    } catch {
+      data = null;
+    }
+    throw toBillingApiError(res.status, data);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = csvFilenameFromDisposition(
+      res.headers.get("Content-Disposition"),
+      fallbackFilename,
+    );
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

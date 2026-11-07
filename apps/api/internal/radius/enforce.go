@@ -32,9 +32,18 @@ import (
 
 // Metrics counts enforcement attempts for /healthz. Zero value is usable;
 // methods are nil-receiver safe so servers without enforcement report 0.
+//
+// G4 (agen E1, ADITIF) adds auth accept/reject and accounting-received
+// counters, surfaced on /healthz as auth_accept, auth_reject and
+// acct_received. Like the enforcement counters they count decisions,
+// not NAS ACKs.
 type Metrics struct {
 	coaSent     atomic.Int64
 	disconnects atomic.Int64
+	// G4 additive counters.
+	authAccept   atomic.Int64
+	authReject   atomic.Int64
+	acctReceived atomic.Int64
 }
 
 // AddCoA records one CoA-Request attempt.
@@ -67,6 +76,54 @@ func (m *Metrics) Disconnects() int64 {
 		return 0
 	}
 	return m.disconnects.Load()
+}
+
+// AddAuthAccept records one Access-Accept decision (G4, ADITIF).
+func (m *Metrics) AddAuthAccept() {
+	if m == nil {
+		return
+	}
+	m.authAccept.Add(1)
+}
+
+// AddAuthReject records one Access-Reject decision (G4, ADITIF).
+func (m *Metrics) AddAuthReject() {
+	if m == nil {
+		return
+	}
+	m.authReject.Add(1)
+}
+
+// AddAcctReceived records one received Accounting-Request (G4, ADITIF).
+func (m *Metrics) AddAcctReceived() {
+	if m == nil {
+		return
+	}
+	m.acctReceived.Add(1)
+}
+
+// AuthAccepts returns the Access-Accept decision count (G4, ADITIF).
+func (m *Metrics) AuthAccepts() int64 {
+	if m == nil {
+		return 0
+	}
+	return m.authAccept.Load()
+}
+
+// AuthRejects returns the Access-Reject decision count (G4, ADITIF).
+func (m *Metrics) AuthRejects() int64 {
+	if m == nil {
+		return 0
+	}
+	return m.authReject.Load()
+}
+
+// AcctReceived returns the received Accounting-Request count (G4, ADITIF).
+func (m *Metrics) AcctReceived() int64 {
+	if m == nil {
+		return 0
+	}
+	return m.acctReceived.Load()
 }
 
 // CoASender exchanges CoA/Disconnect packets with a NAS. *coa.Sender

@@ -136,3 +136,47 @@ func TestTypedDefaultsOnBadValues(t *testing.T) {
 		t.Fatalf("default template missing: %q", typed.TplIssued)
 	}
 }
+
+// TestSMTPPassIsSecret is the G4 hardening regression test: smtp_pass must
+// be stored encrypted and masked in List, while Typed still resolves the
+// cleartext for the SMTP sender (legacy plaintext tolerated read-only).
+func TestSMTPPassIsSecret(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newService(map[string]string{})
+	if _, err := svc.Update(ctx, map[string]string{"smtp_pass": "s3cr3t"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.rows["smtp_pass"]; !strings.HasPrefix(got, "enc:v1:") {
+		t.Fatalf("stored smtp_pass not encrypted: %q", got)
+	}
+	out, err := svc.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["smtp_pass"] != "***" {
+		t.Fatalf("listed smtp_pass = %q, want masked", out["smtp_pass"])
+	}
+	typed, err := svc.Typed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typed.SMTPPass != "s3cr3t" {
+		t.Fatalf("typed SMTPPass = %q, want cleartext", typed.SMTPPass)
+	}
+
+	legacy, _ := newService(map[string]string{"smtp_pass": "plain-legacy"})
+	typedLegacy, err := legacy.Typed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typedLegacy.SMTPPass != "plain-legacy" {
+		t.Fatalf("legacy SMTPPass = %q, want passthrough", typedLegacy.SMTPPass)
+	}
+	outLegacy, err := legacy.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outLegacy["smtp_pass"] != "***" {
+		t.Fatalf("legacy listed smtp_pass = %q, want masked", outLegacy["smtp_pass"])
+	}
+}

@@ -23,6 +23,7 @@ var SecretKeys = map[string]bool{
 	"kriskris_api_key":         true,
 	"kriskris_api_secret":      true,
 	"kriskris_callback_secret": true,
+	"smtp_pass":                true,
 }
 
 // IsSecret reports whether key is stored encrypted.

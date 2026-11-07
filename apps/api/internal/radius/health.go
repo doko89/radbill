@@ -16,7 +16,8 @@ type Health struct {
 
 // healthBody is the exact GET /healthz JSON shape. coa_sent and
 // disconnects count enforcement attempts (not NAS ACKs); older clients
-// ignore the additive fields.
+// ignore the additive fields. G4 (agen E1, ADITIF) appends auth_accept,
+// auth_reject and acct_received; every pre-existing field is untouched.
 type healthBody struct {
 	Status         string `json:"status"`
 	CachedAccounts int    `json:"cached_accounts"`
@@ -25,6 +26,9 @@ type healthBody struct {
 	UptimeSeconds  int64  `json:"uptime_seconds"`
 	CoASent        int64  `json:"coa_sent"`
 	Disconnects    int64  `json:"disconnects"`
+	AuthAccept     int64  `json:"auth_accept"`
+	AuthReject     int64  `json:"auth_reject"`
+	AcctReceived   int64  `json:"acct_received"`
 }
 
 // Handler returns an http.Handler serving GET /healthz (404 otherwise).
@@ -40,6 +44,9 @@ func (h *Health) Handler() http.Handler {
 			UptimeSeconds:  int64(time.Since(h.Start).Seconds()),
 			CoASent:        h.Metrics.CoASent(),
 			Disconnects:    h.Metrics.Disconnects(),
+			AuthAccept:     h.Metrics.AuthAccepts(),
+			AuthReject:     h.Metrics.AuthRejects(),
+			AcctReceived:   h.Metrics.AcctReceived(),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)

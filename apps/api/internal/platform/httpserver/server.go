@@ -19,6 +19,9 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/static"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditinfra "boilerplate/api/internal/audit/infrastructure"
+	auditpres "boilerplate/api/internal/audit/presentation"
 	authapp "boilerplate/api/internal/auth/application"
 	authinfra "boilerplate/api/internal/auth/infrastructure"
 	authpres "boilerplate/api/internal/auth/presentation"
@@ -28,6 +31,10 @@ import (
 	custapp "boilerplate/api/internal/customers/application"
 	custinfra "boilerplate/api/internal/customers/infrastructure"
 	custpres "boilerplate/api/internal/customers/presentation"
+	dashapp "boilerplate/api/internal/dashboard/application"
+	dashdomain "boilerplate/api/internal/dashboard/domain"
+	dashinfra "boilerplate/api/internal/dashboard/infrastructure"
+	dashpres "boilerplate/api/internal/dashboard/presentation"
 	jwtapp "boilerplate/api/internal/jwtauth/application"
 	jwtauthdomain "boilerplate/api/internal/jwtauth/domain"
 	jwtinfra "boilerplate/api/internal/jwtauth/infrastructure"
@@ -62,6 +69,7 @@ import (
 	schedapp "boilerplate/api/internal/scheduler/application"
 	schedinfra "boilerplate/api/internal/scheduler/infrastructure"
 	schedpres "boilerplate/api/internal/scheduler/presentation"
+	"boilerplate/api/internal/security"
 	sessapp "boilerplate/api/internal/sessions/application"
 	sessinfra "boilerplate/api/internal/sessions/infrastructure"
 	sesspres "boilerplate/api/internal/sessions/presentation"
@@ -144,6 +152,9 @@ func NewWithFS(cfg config.Config, pool *sql.DB, dist fs.FS) (*fiber.App, error) 
 	app := fiber.New(fiber.Config{
 		AppName:      "boilerplate",
 		ErrorHandler: jsonErrorHandler,
+		// Explicit 1MB cap for all API JSON (incl. kriskris webhooks) and
+		// multipart uploads (avatars allow 512KB + envelope, still below).
+		BodyLimit: 1 << 20,
 	})
 
 	app.Use(recover.New())
@@ -297,6 +308,11 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 
 	v1 := api.Group("/v1")
 	auth := v1.Group("/auth")
+	// G4 (agen E1, ADITIF): E2 rate limiter, 30 req/min (burst 15). One
+	// instance per app (per Limit call) so buckets are shared by every
+	// request; each test builds a fresh app, so no G1/G2/G3 test trips
+	// it. The G1 login limiter stays as defense in depth.
+	auth.Use(security.Limit(30, 15))
 	auth.Post("/login", authHandler.Login)
 	auth.Post("/refresh", authHandler.Refresh)
 	auth.Post("/logout", authHandler.Logout)
@@ -306,7 +322,13 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 
 	admin := v1.Group("/admin")
 
+	// G4 (agen E1, ADITIF): one audit sink per register func (the
+	// service is a stateless wrapper over queries, so sharing one
+	// instance across funcs would only add plumbing).
+	g4audit := auditapp.NewService(auditinfra.NewStore(queries))
+
 	custHandler := custpres.NewHandler(custapp.NewService(custinfra.NewSQLRepository(queries)))
+	custHandler.SetAuditor(g4audit)
 	customers := admin.Group("/customers")
 	customers.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerRead), custHandler.List)
 	customers.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerRead), custHandler.Get)
@@ -316,6 +338,7 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 	customers.Delete("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Delete)
 
 	pkgHandler := pkgpres.NewHandler(pkgapp.NewService(pkginfra.NewSQLRepository(queries, events)))
+	pkgHandler.SetAuditor(g4audit)
 	packages := admin.Group("/packages")
 	packages.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermPackageRead), pkgHandler.List)
 	packages.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermPackageRead), pkgHandler.Get)
@@ -331,6 +354,7 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 		pppoeinfra.NewCoADisconnecter(queries, coaSender),
 		hasher,
 	))
+	pppoeHandler.SetAuditor(g4audit)
 	pppoe := admin.Group("/pppoe-accounts")
 	pppoeRead := jwtpres.Require(authSvc, jwtauthdomain.PermPPPoERead)
 	pppoeWrite := jwtpres.Require(authSvc, jwtauthdomain.PermPPPoEWrite)
@@ -351,6 +375,7 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 	pppoe.Post("/:id/portal-account/reset", pppoeWrite, pppoeHandler.ResetPortalAccount)
 
 	nasHandler := naspres.NewHandler(nasapp.NewService(nasinfra.NewSQLRepository(queries, events), coaSender))
+	nasHandler.SetAuditor(g4audit)
 	nas := admin.Group("/nas")
 	nasRead := jwtpres.Require(authSvc, jwtauthdomain.PermNASRead)
 	nasWrite := jwtpres.Require(authSvc, jwtauthdomain.PermNASWrite)
@@ -371,6 +396,7 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 	// G2 (agen C1): named so the paid hook can be installed below.
 	billSvc := billapp.NewService(billRepo, billRepo, billRepo)
 	billHandler := billpres.NewHandler(billSvc)
+	billHandler.SetAuditor(g4audit)
 	invoices := admin.Group("/invoices")
 	invoices.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), billHandler.List)
 	invoices.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), billHandler.Get)
@@ -397,6 +423,10 @@ func registerG2Routes(
 	billSvc *billapp.Service,
 	pppoeRepo *pppoeinfra.SQLRepository,
 ) {
+	// G4 (agen E1, ADITIF): audit sink for the G2 handlers.
+	g4audit := auditapp.NewService(auditinfra.NewStore(queries))
+	authHandler.SetAuditor(g4audit)
+
 	// Authenticated password change (any role: admin and portal users).
 	auth.Post("/password/change", jwtpres.Authenticate(authSvc), authHandler.ChangePassword)
 
@@ -405,6 +435,7 @@ func registerG2Routes(
 	// counts are locked by jwtauth tests.
 	setSvc := setapp.NewService(setinfra.NewSQLRepository(queries), setinfra.NewCrypter(cfg.SettingsEncKey))
 	setHandler := setpres.NewHandler(setSvc)
+	setHandler.SetAuditor(g4audit)
 	settings := admin.Group("/settings")
 	settingsRead := jwtpres.Require(authSvc, jwtauthdomain.PermSettingsWrite)
 	settings.Get("/", settingsRead, setHandler.List)
@@ -483,7 +514,40 @@ func registerG2Routes(
 	// kriskris cannot send our CSRF token. App-level middleware (helmet,
 	// recover, logger) still applies; all pre-existing routes keep their
 	// CSRF protection unchanged.
-	app.Post("/api/v1/webhooks/kriskris", krisHandler.Webhook)
+	// G4 (agen E1, ADITIF): E2 rate limiter, 120 req/min (burst 60),
+	// first in chain.
+	app.Post("/api/v1/webhooks/kriskris", security.Limit(120, 60), krisHandler.Webhook)
+
+	registerG4Routes(admin, pool, queries, authSvc, schedSvc)
+}
+
+// registerG4Routes wires billing Fase 4 (agen E1/G4, ADITIF): the admin
+// audit log, dashboard, and metrics endpoints. G1/G2/G3 routes above
+// are untouched.
+func registerG4Routes(
+	admin fiber.Router,
+	pool *sql.DB,
+	queries *sqlcgen.Queries,
+	authSvc *jwtapp.Service,
+	schedSvc *schedapp.Service,
+) {
+	auditSvc := auditapp.NewService(auditinfra.NewStore(queries))
+	auditHandler := auditpres.NewHandler(auditSvc)
+	auditLogs := admin.Group("/audit-logs")
+	auditLogs.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermAuditRead), auditHandler.List)
+
+	dashSvc := dashapp.NewService(dashinfra.NewStore(queries))
+	dashSvc.SetPing(func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		return pool.PingContext(ctx)
+	})
+	dashSvc.SetScheduler(func() []dashdomain.SchedulerJob {
+		return dashapp.SchedulerJobs(schedSvc.Status())
+	})
+	dashHandler := dashpres.NewHandler(dashSvc)
+	admin.Get("/dashboard", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), dashHandler.Dashboard)
+	admin.Get("/metrics", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), dashHandler.Metrics)
 }
 
 // registerG3Routes wires billing Fase 3 (agen G3/D2, ADITIF): portal
@@ -511,6 +575,8 @@ func registerG3Routes(
 		Disco:    pppoeinfra.NewCoADisconnecter(queries, coaSender),
 	})
 	planHandler := planchangespres.NewHandler(planSvc, planchangesinfra.NewPackageCatalog(queries))
+	// G4 (agen E1, ADITIF): audit sink for self-service plan changes.
+	planHandler.SetAuditor(auditapp.NewService(auditinfra.NewStore(queries)))
 	schedSvc.SetPlanChangeApplier(schedinfra.NewPlanChangesAdapter(planSvc))
 
 	reportsSvc := reportsapp.NewService(reportsinfra.NewStore(queries))

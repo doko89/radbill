@@ -82,13 +82,13 @@ func run() error {
 	authSrv := &lradius.PacketServer{
 		Addr:         cfg.AuthAddr,
 		SecretSource: secrets,
-		Handler:      &radius.AuthServer{Cache: cache, Log: logger, Usage: usage},
+		Handler:      &radius.AuthServer{Cache: cache, Log: logger, Usage: usage, Metrics: metrics},
 		ErrorLog:     slogBridge(logger, "auth"),
 	}
 	acctSrv := &lradius.PacketServer{
 		Addr:         cfg.AcctAddr,
 		SecretSource: secrets,
-		Handler:      &radius.AcctServer{Cache: cache, Log: logger, Sessions: sessions, Writer: writer, Usage: usage, Enforce: enforcer},
+		Handler:      &radius.AcctServer{Cache: cache, Log: logger, Sessions: sessions, Writer: writer, Usage: usage, Enforce: enforcer, Metrics: metrics},
 		ErrorLog:     slogBridge(logger, "acct"),
 	}
 	go func() {

@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -119,10 +120,33 @@ func (s *Service) Typed(ctx context.Context) (setdomain.Typed, error) {
 	}
 	all := make(map[string]string, len(rows))
 	for _, r := range rows {
+		if r.Key == setdomain.KeySMTPPass {
+			// SMTP needs the cleartext password; other secrets stay out
+			// of the typed view.
+			all[r.Key] = s.decryptLenient(r.Value)
+			continue
+		}
 		if setdomain.IsSecret(r.Key) {
 			continue
 		}
 		all[r.Key] = r.Value
 	}
 	return setdomain.TypedFromMap(all), nil
+}
+
+// decryptLenient decrypts a secret for internal consumers. Legacy plaintext
+// values (stored before the key became secret) are returned as-is so old
+// deployments keep working; re-saving the setting encrypts them.
+func (s *Service) decryptLenient(stored string) string {
+	if stored == "" {
+		return ""
+	}
+	plain, err := s.crypt.Decrypt(stored)
+	if err == nil {
+		return plain
+	}
+	if errors.Is(err, setdomain.ErrNotEncrypted) {
+		return stored
+	}
+	return ""
 }

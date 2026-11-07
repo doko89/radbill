@@ -12,7 +12,9 @@ import (
 
 // queryLimit caps one report scan. Documented: installations larger than
 // this per range need paged reports (Fase 4).
-const queryLimit = 100000
+// queryLimit bounds the receivables scan (G4 hardening): far above realistic
+// unpaid-invoice counts, prevents unbounded growth in response size.
+const queryLimit = 5000
 
 // pageSize bounds one account-status page for growth.
 const pageSize = 2000

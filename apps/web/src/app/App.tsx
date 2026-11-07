@@ -8,6 +8,7 @@ import { ProfilePage } from "../features/profile/pages/ProfilePage";
 import { BillingAuthProvider } from "../features/billing-auth/BillingAuthProvider";
 import { BillingLoginPage } from "../features/billing-auth/pages/BillingLoginPage";
 import { DashboardPage } from "../features/billing-dashboard/pages/DashboardPage";
+import { AuditPage } from "../features/billing-audit/pages/AuditPage";
 import { CustomersPage } from "../features/billing-customers/pages/CustomersPage";
 import { PackagesPage } from "../features/billing-packages/pages/PackagesPage";
 import { PppoeAccountsPage } from "../features/billing-pppoe-accounts/pages/PppoeAccountsPage";
@@ -126,6 +127,14 @@ export function App() {
                     element={
                       <RequireBillingPermission anyOf={[BillingPermissions.reportsRead]}>
                         <ReportsPage />
+                      </RequireBillingPermission>
+                    }
+                  />
+                  <Route
+                    path="/admin/audit"
+                    element={
+                      <RequireBillingPermission anyOf={[BillingPermissions.auditRead]}>
+                        <AuditPage />
                       </RequireBillingPermission>
                     }
                   />

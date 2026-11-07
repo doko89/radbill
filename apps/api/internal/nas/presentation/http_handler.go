@@ -3,10 +3,14 @@ package presentation
 
 import (
 	"errors"
+	"log"
 	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditdomain "boilerplate/api/internal/audit/domain"
+	authpres "boilerplate/api/internal/jwtauth/presentation"
 	nasapp "boilerplate/api/internal/nas/application"
 	"boilerplate/api/internal/nas/domain"
 	"boilerplate/api/internal/shared/apperr"
@@ -15,11 +19,31 @@ import (
 // Handler serves /api/v1/admin/nas endpoints.
 type Handler struct {
 	svc *nasapp.Service
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler.
 func NewHandler(svc *nasapp.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetAuditor installs the G4 audit sink (Fase 4, ADITIF).
+func (h *Handler) SetAuditor(a *auditapp.Service) { h.audit = a }
+
+// auditLog records one best-effort entry: failures are logged, the
+// request still succeeds. The shared secret never lands in detail.
+func (h *Handler) auditLog(c fiber.Ctx, action, targetID, detail string) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Log(c.Context(), auditapp.LogInput{
+		ActorID: authpres.Subject(c), Action: action,
+		TargetType: auditdomain.TargetNAS, TargetID: targetID,
+		Detail: detail, IP: c.IP(),
+	}); err != nil {
+		log.Printf("audit: log %s failed: %v", action, err)
+	}
 }
 
 type nasRequest struct {
@@ -60,6 +84,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionNASCreated, dto.ID, "name="+dto.Name+" ip="+dto.IP)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
 }
 
@@ -75,6 +100,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionNASUpdated, dto.ID, "name="+dto.Name+" ip="+dto.IP)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -83,6 +109,7 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.svc.Delete(c.Context(), c.Params("id")); err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionNASDeleted, c.Params("id"), "")
 	return c.JSON(fiber.Map{"data": fiber.Map{"ok": true}})
 }
 

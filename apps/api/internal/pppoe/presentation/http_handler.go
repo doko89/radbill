@@ -9,6 +9,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditdomain "boilerplate/api/internal/audit/domain"
 	authdomain "boilerplate/api/internal/jwtauth/domain"
 	authpres "boilerplate/api/internal/jwtauth/presentation"
 	pppoeapp "boilerplate/api/internal/pppoe/application"
@@ -19,11 +21,31 @@ import (
 // Handler serves /api/v1/admin/pppoe-accounts endpoints.
 type Handler struct {
 	svc *pppoeapp.Service
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler.
 func NewHandler(svc *pppoeapp.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetAuditor installs the G4 audit sink (Fase 4, ADITIF).
+func (h *Handler) SetAuditor(a *auditapp.Service) { h.audit = a }
+
+// auditLog records one best-effort entry: failures are logged, the
+// request still succeeds. Callers must never pass passwords in detail.
+func (h *Handler) auditLog(c fiber.Ctx, action, targetID, detail string) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Log(c.Context(), auditapp.LogInput{
+		ActorID: authpres.Subject(c), Action: action,
+		TargetType: auditdomain.TargetPPPoE, TargetID: targetID,
+		Detail: detail, IP: c.IP(),
+	}); err != nil {
+		log.Printf("audit: log %s failed: %v", action, err)
+	}
 }
 
 type pppoeRequest struct {
@@ -57,6 +79,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 	}
 	if reveal {
 		log.Printf("audit password_revealed actor=%s pppoe=%s", authpres.Subject(c), dto.ID)
+		h.auditLog(c, auditdomain.ActionPPPoEPasswordReveal, dto.ID, "username="+dto.Username)
 	}
 	return c.JSON(fiber.Map{"data": dto})
 }
@@ -75,6 +98,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoECreated, dto.ID, "username="+dto.Username)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
 }
 
@@ -92,6 +116,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEUpdated, dto.ID, "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -100,6 +125,7 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.svc.Delete(c.Context(), c.Params("id")); err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEDeleted, c.Params("id"), "")
 	return c.JSON(fiber.Map{"data": fiber.Map{"ok": true}})
 }
 
@@ -109,6 +135,7 @@ func (h *Handler) Isolate(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEIsolated, dto.ID, "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -118,6 +145,7 @@ func (h *Handler) Activate(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEActivated, dto.ID, "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -127,6 +155,7 @@ func (h *Handler) Disable(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEDisabled, dto.ID, "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -144,6 +173,7 @@ func (h *Handler) Extend(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEExtended, dto.ID, "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -161,6 +191,7 @@ func (h *Handler) ChangePackage(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEPackageChanged, dto.ID, "username="+dto.Username+" package="+req.PackageID)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -169,6 +200,7 @@ func (h *Handler) ResetQuota(c fiber.Ctx) error {
 	if err := h.svc.ResetQuota(c.Context(), c.Params("id")); err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEQuotaReset, c.Params("id"), "")
 	return c.JSON(fiber.Map{"data": fiber.Map{"ok": true}})
 }
 
@@ -178,6 +210,7 @@ func (h *Handler) Disconnect(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEDisconnected, c.Params("id"), "disconnected="+strconv.Itoa(dto.Disconnected))
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -196,6 +229,7 @@ func (h *Handler) CreatePortalAccount(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEPortalCreated, c.Params("id"), "username="+dto.Username)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
 }
 
@@ -209,6 +243,7 @@ func (h *Handler) ResetPortalAccount(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPPPoEPortalReset, c.Params("id"), "username="+dto.Username)
 	return c.JSON(fiber.Map{"data": dto})
 }
 

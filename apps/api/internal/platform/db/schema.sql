@@ -272,3 +272,21 @@ CREATE TABLE IF NOT EXISTS plan_changes (
 CREATE INDEX IF NOT EXISTS idx_plan_changes_status_effective ON plan_changes (status, effective_at);
 
 INSERT INTO settings (key, value, updated_at) VALUES ('topup_price_per_gb', '10000', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+
+-- billing Fase 4 (agen E1/G4, ADITIF): audit log admin. Ditulis sinkron dan
+-- best-effort dari presentation layer (kegagalan insert hanya dicatat di
+-- server log, request tetap sukses). Kontrak kolom milik G4.
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id             TEXT PRIMARY KEY,
+    actor_id       TEXT NULL,
+    actor_username TEXT NOT NULL DEFAULT '',
+    action         TEXT NOT NULL,
+    target_type    TEXT NOT NULL DEFAULT '',
+    target_id      TEXT NOT NULL DEFAULT '',
+    detail         TEXT NOT NULL DEFAULT '',
+    ip             TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_id ON audit_logs (actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs (action, created_at);

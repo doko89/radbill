@@ -199,3 +199,20 @@ func TestAccountingUnknownUserAcks(t *testing.T) {
 		t.Fatalf("unknown user must enqueue nothing, queue=%d", n)
 	}
 }
+
+// TestAcctG4Metrics is the Fase 4 additive check (agen E1): every
+// received Accounting-Request increments acct_received, including drops
+// from unknown NAS; other RADIUS codes count nothing.
+func TestAcctG4Metrics(t *testing.T) {
+	m := &Metrics{}
+	srv := &AcctServer{Cache: testCache(), Log: slog.New(slog.DiscardHandler),
+		Sessions: NewSessionTracker(), Writer: NewWriter(nil, slog.New(slog.DiscardHandler)),
+		Metrics: m}
+	serveAcct(srv, acctPacket(t, rfc2866.AcctStatusType_Value_Start, "ghost", "s-g4-1", 0, 0, 0, nil), testNASIP)
+	serveAcct(srv, acctPacket(t, rfc2866.AcctStatusType_Value_Start, "alice", "s-g4-2", 0, 0, 0, nil), "10.9.9.9")
+	cw := &captureWriter{}
+	srv.ServeRADIUS(cw, testRequest(lradius.New(lradius.CodeAccessRequest, []byte(testNASSecret)), testNASIP))
+	if m.AcctReceived() != 2 {
+		t.Fatalf("acct_received = %d, want 2", m.AcctReceived())
+	}
+}

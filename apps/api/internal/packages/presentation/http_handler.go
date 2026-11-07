@@ -3,10 +3,14 @@ package presentation
 
 import (
 	"errors"
+	"log"
 	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditdomain "boilerplate/api/internal/audit/domain"
+	authpres "boilerplate/api/internal/jwtauth/presentation"
 	pkgapp "boilerplate/api/internal/packages/application"
 	"boilerplate/api/internal/packages/domain"
 	"boilerplate/api/internal/shared/apperr"
@@ -15,11 +19,31 @@ import (
 // Handler serves /api/v1/admin/packages endpoints.
 type Handler struct {
 	svc *pkgapp.Service
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler.
 func NewHandler(svc *pkgapp.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetAuditor installs the G4 audit sink (Fase 4, ADITIF).
+func (h *Handler) SetAuditor(a *auditapp.Service) { h.audit = a }
+
+// auditLog records one best-effort entry: failures are logged, the
+// request still succeeds.
+func (h *Handler) auditLog(c fiber.Ctx, action, targetID, detail string) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Log(c.Context(), auditapp.LogInput{
+		ActorID: authpres.Subject(c), Action: action,
+		TargetType: auditdomain.TargetPackage, TargetID: targetID,
+		Detail: detail, IP: c.IP(),
+	}); err != nil {
+		log.Printf("audit: log %s failed: %v", action, err)
+	}
 }
 
 type packageRequest struct {
@@ -69,6 +93,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPackageCreated, dto.ID, "name="+dto.Name)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
 }
 
@@ -82,6 +107,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPackageUpdated, dto.ID, "name="+dto.Name)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -90,6 +116,7 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.svc.Delete(c.Context(), c.Params("id")); err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPackageDeleted, c.Params("id"), "")
 	return c.JSON(fiber.Map{"data": fiber.Map{"ok": true}})
 }
 

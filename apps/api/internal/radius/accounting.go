@@ -21,6 +21,8 @@ type AcctServer struct {
 	Usage    *UsageMirror     // nil = no usage mirror (usage still persists via Writer)
 	Enforce  *Enforcer        // nil = no interim enforcement
 	Now      func() time.Time // overridable clock (tests); nil = time.Now
+	// Metrics counts received packets (G4, ADITIF); nil = no counting.
+	Metrics *Metrics
 }
 
 func (s *AcctServer) now() time.Time {
@@ -35,6 +37,9 @@ func (s *AcctServer) ServeRADIUS(w lradius.ResponseWriter, r *lradius.Request) {
 	if r.Code != lradius.CodeAccountingRequest {
 		return
 	}
+	// G4: count every received Accounting-Request (nil-safe), including
+	// drops from unknown NAS below — acct_received means received.
+	s.Metrics.AddAcctReceived()
 	nas, ok := s.Cache.NASByIP(sourceIP(r.RemoteAddr))
 	if !ok {
 		return // unknown NAS: drop without response

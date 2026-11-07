@@ -3,23 +3,47 @@ package presentation
 
 import (
 	"errors"
+	"log"
 	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
+	auditdomain "boilerplate/api/internal/audit/domain"
 	billapp "boilerplate/api/internal/billing/application"
 	"boilerplate/api/internal/billing/domain"
+	authpres "boilerplate/api/internal/jwtauth/presentation"
 	"boilerplate/api/internal/shared/apperr"
 )
 
 // Handler serves /api/v1/admin/invoices endpoints.
 type Handler struct {
 	svc *billapp.Service
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler.
 func NewHandler(svc *billapp.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetAuditor installs the G4 audit sink (Fase 4, ADITIF).
+func (h *Handler) SetAuditor(a *auditapp.Service) { h.audit = a }
+
+// auditLog records one best-effort entry: failures are logged, the
+// request still succeeds.
+func (h *Handler) auditLog(c fiber.Ctx, action, targetID, detail string) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Log(c.Context(), auditapp.LogInput{
+		ActorID: authpres.Subject(c), Action: action,
+		TargetType: auditdomain.TargetInvoice, TargetID: targetID,
+		Detail: detail, IP: c.IP(),
+	}); err != nil {
+		log.Printf("audit: log %s failed: %v", action, err)
+	}
 }
 
 // List returns a page of invoices: {data:[],total}. ?status= filters.
@@ -71,6 +95,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionInvoiceCreated, dto.ID, "number="+dto.Number+" total="+strconv.FormatInt(dto.Total, 10))
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
 }
 
@@ -80,6 +105,7 @@ func (h *Handler) Void(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionInvoiceVoided, dto.ID, "number="+dto.Number)
 	return c.JSON(fiber.Map{"data": dto})
 }
 
@@ -100,6 +126,7 @@ func (h *Handler) ManualPayment(c fiber.Ctx) error {
 	if err != nil {
 		return mapError(c, err)
 	}
+	h.auditLog(c, auditdomain.ActionPaymentManual, dto.ID, "number="+dto.Number+" amount="+strconv.FormatInt(dto.Total, 10))
 	return c.JSON(fiber.Map{"data": dto})
 }
 

@@ -53,6 +53,8 @@ type AuthServer struct {
 	Log   *slog.Logger
 	Usage *UsageMirror     // nil = treat every account as fresh (full quota/time)
 	Now   func() time.Time // overridable clock (tests); nil = time.Now
+	// Metrics counts accept/reject decisions (G4, ADITIF); nil = no counting.
+	Metrics *Metrics
 }
 
 func (s *AuthServer) now() time.Time {
@@ -132,11 +134,13 @@ func (s *AuthServer) ServeRADIUS(w lradius.ResponseWriter, r *lradius.Request) {
 		s.Log.Warn("auth accept: write failed", "user", username, "nas", nas.Name, "err", err)
 		return
 	}
+	s.Metrics.AddAuthAccept() // G4: nil-safe, servers without metrics skip
 	s.Log.Debug("auth accept", "user", username, "nas", nas.Name, "method", method,
 		"isolated", decision.Isolated, "throttled", decision.Throttled)
 }
 
 func (s *AuthServer) writeReject(w lradius.ResponseWriter, r *lradius.Request, nas *NAS, username, reason string) {
+	s.Metrics.AddAuthReject() // G4: count the decision, like coa_sent/disconnects
 	resp := r.Response(lradius.CodeAccessReject)
 	_ = rfc2865.ReplyMessage_AddString(resp, reason)
 	if err := w.Write(resp); err != nil {

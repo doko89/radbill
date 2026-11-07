@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	auditapp "boilerplate/api/internal/audit/application"
 	authapp "boilerplate/api/internal/jwtauth/application"
 )
 
@@ -14,6 +15,8 @@ type Handler struct {
 	refreshTTL time.Duration
 	secure     bool
 	devExpose  bool
+	// audit is the G4 sink (nil = disabled, pre-G4 behavior).
+	audit *auditapp.Service
 }
 
 // NewHandler builds a Handler. secure marks cookies Secure (https only);

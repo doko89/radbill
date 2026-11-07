@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { billingRequest, withQuery } from "../../shared/lib/billing-api";
+import { billingDownloadCsv, billingRequest, withQuery } from "../../shared/lib/billing-api";
 
 /**
  * Laporan admin (agen G3, kontrak D2 didikte, JSON; ekspor CSV = G4).
@@ -122,4 +122,50 @@ export async function getGrowthReport(months: number): Promise<GrowthReport> {
     withQuery("/api/v1/admin/reports/growth", { months }),
   );
   return growthEnvelope.parse(raw).data;
+}
+
+// --- ekspor CSV (G4): filter yang sama + ?format=csv, unduh sebagai file ---
+
+export async function downloadRevenueCsv(input: {
+  from?: string | undefined;
+  to?: string | undefined;
+  group_by: RevenueGroupBy;
+}): Promise<void> {
+  await billingDownloadCsv(
+    withQuery("/api/v1/admin/reports/revenue", {
+      from: input.from ?? null,
+      to: input.to ?? null,
+      group_by: input.group_by,
+      format: "csv",
+    }),
+    "laporan-pendapatan.csv",
+  );
+}
+
+export async function downloadUsageCsv(input: {
+  from?: string | undefined;
+  to?: string | undefined;
+}): Promise<void> {
+  await billingDownloadCsv(
+    withQuery("/api/v1/admin/reports/usage", {
+      from: input.from ?? null,
+      to: input.to ?? null,
+      format: "csv",
+    }),
+    "laporan-pemakaian.csv",
+  );
+}
+
+export async function downloadReceivablesCsv(): Promise<void> {
+  await billingDownloadCsv(
+    withQuery("/api/v1/admin/reports/receivables", { format: "csv" }),
+    "laporan-piutang.csv",
+  );
+}
+
+export async function downloadGrowthCsv(months: number): Promise<void> {
+  await billingDownloadCsv(
+    withQuery("/api/v1/admin/reports/growth", { months, format: "csv" }),
+    "laporan-pertumbuhan.csv",
+  );
 }

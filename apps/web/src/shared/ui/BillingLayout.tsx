@@ -11,6 +11,7 @@ const NAV_ITEMS: { to: string; label: string; end: boolean }[] = [
   { to: "/admin/sessions", label: "Sesi", end: false },
   { to: "/admin/invoices", label: "Tagihan", end: false },
   { to: "/admin/reports", label: "Laporan", end: false },
+  { to: "/admin/audit", label: "Audit", end: false },
 ];
 
 export function BillingLayout() {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { ApiError } from "../../../shared/lib/api";
 import { formatBytes, formatDate, formatIDR } from "../../../shared/lib/billing-format";
 import {
@@ -20,6 +21,10 @@ import {
   TR,
 } from "../../../shared/ui/billing-ui";
 import {
+  downloadGrowthCsv,
+  downloadReceivablesCsv,
+  downloadRevenueCsv,
+  downloadUsageCsv,
   getGrowthReport,
   getReceivablesReport,
   getRevenueReport,
@@ -76,9 +81,51 @@ export function ReportsPage() {
   const [useFrom, setUseFrom] = useState(() => isoDaysAgo(29));
   const [useTo, setUseTo] = useState(() => isoToday());
   const [growthMonths, setGrowthMonths] = useState(6);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [csvError, setCsvError] = useState<string | null>(null);
 
   const revenueValid = rangeValid(revFrom, revTo);
   const usageValid = rangeValid(useFrom, useTo);
+
+  async function onDownloadCsv(kind: ReportTab): Promise<void> {
+    setCsvBusy(true);
+    setCsvError(null);
+    try {
+      if (kind === "revenue") {
+        await downloadRevenueCsv({
+          from: revFrom === "" ? undefined : revFrom,
+          to: revTo === "" ? undefined : revTo,
+          group_by: revGroup,
+        });
+      } else if (kind === "usage") {
+        await downloadUsageCsv({
+          from: useFrom === "" ? undefined : useFrom,
+          to: useTo === "" ? undefined : useTo,
+        });
+      } else if (kind === "receivables") {
+        await downloadReceivablesCsv();
+      } else {
+        await downloadGrowthCsv(growthMonths);
+      }
+    } catch (error) {
+      setCsvError(error instanceof ApiError ? error.message : "unduh CSV gagal");
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  function csvDisabled(kind: ReportTab): boolean {
+    if (csvBusy) {
+      return true;
+    }
+    if (kind === "revenue") {
+      return !revenueValid;
+    }
+    if (kind === "usage") {
+      return !usageValid;
+    }
+    return false;
+  }
 
   const revenue = useQuery({
     queryKey: ["billing", "reports", "revenue", revFrom, revTo, revGroup],
@@ -148,8 +195,25 @@ export function ReportsPage() {
         ))}
       </div>
 
+      {csvError && (
+        <div className="mb-4">
+          <FormAlert message={csvError} />
+        </div>
+      )}
+
       {tab === "revenue" && (
         <section role="tabpanel" id="reports-panel-revenue" aria-labelledby="reports-tab-revenue">
+          <div className="mb-4 flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={csvDisabled("revenue")}
+              onClick={() => void onDownloadCsv("revenue")}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {csvBusy ? "Mengunduh…" : "Unduh CSV"}
+            </Button>
+          </div>
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
             <Field label="Dari" htmlFor="revenue-from">
               <Input
@@ -250,6 +314,17 @@ export function ReportsPage() {
 
       {tab === "usage" && (
         <section role="tabpanel" id="reports-panel-usage" aria-labelledby="reports-tab-usage">
+          <div className="mb-4 flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={csvDisabled("usage")}
+              onClick={() => void onDownloadCsv("usage")}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {csvBusy ? "Mengunduh…" : "Unduh CSV"}
+            </Button>
+          </div>
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <Field label="Dari" htmlFor="usage-from">
               <Input
@@ -346,6 +421,17 @@ export function ReportsPage() {
           id="reports-panel-receivables"
           aria-labelledby="reports-tab-receivables"
         >
+          <div className="mb-4 flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={csvDisabled("receivables")}
+              onClick={() => void onDownloadCsv("receivables")}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {csvBusy ? "Mengunduh…" : "Unduh CSV"}
+            </Button>
+          </div>
           {receivables.isPending && (
             <p className="text-sm text-slate-500" role="status">
               Memuat laporan piutang…
@@ -422,6 +508,17 @@ export function ReportsPage() {
 
       {tab === "growth" && (
         <section role="tabpanel" id="reports-panel-growth" aria-labelledby="reports-tab-growth">
+          <div className="mb-4 flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={csvDisabled("growth")}
+              onClick={() => void onDownloadCsv("growth")}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {csvBusy ? "Mengunduh…" : "Unduh CSV"}
+            </Button>
+          </div>
           <div className="mb-4 grid gap-3 sm:max-w-64">
             <Field label="Rentang" htmlFor="growth-months">
               <Select

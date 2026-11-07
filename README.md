@@ -1,3 +1,37 @@
+# Radbill — Billing RADIUS untuk MikroTik
+
+Aplikasi billing ISP/RT-RW Net: kelola pelanggan PPPoE, paket
+(waktu/kuota/FUP), tagihan otomatis, pembayaran QRIS (kriskris),
+portal pelanggan mandiri, dan RADIUS auth/accounting yang tetap hidup
+saat billing restart. Spesifikasi: [`PRD.md`](PRD.md).
+
+```text
+MikroTik <-RADIUS-> radiusd (bin/radiusd) -+
+                                            +-> PostgreSQL
+Browser <-HTTPS-> billing (bin/api :3000) -+
+```
+
+Quickstart dev (sqlite, tanpa postgres):
+
+```bash
+make setup          # go mod download + npm install
+make dev            # API :3000 + web :5173 (proxy /api -> :3000)
+make dev-radiusd    # RADIUS :1812/:1813 + health :8081 (terminal lain)
+```
+
+Buka http://localhost:5173: panel admin di `/admin` (login JWT),
+portal pelanggan di `/portal`. Produksi: `make build` +
+`make build-radiusd` → dua binary + PostgreSQL.
+
+Dokumentasi:
+
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deploy, env, systemd, backup, monitoring
+- [`docs/MIKROTIK.md`](docs/MIKROTIK.md) — setup RouterOS + isolir + CoA + uji
+- [`docs/API.md`](docs/API.md) — referensi endpoint `/api/v1`
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — jawaban 8 pertanyaan PRD + deviasi fase
+
+---
+
 # Boilerplate
 
 Monorepo: Go API (pragmatic DDD) + React SPA (feature-based). One binary serves both.
