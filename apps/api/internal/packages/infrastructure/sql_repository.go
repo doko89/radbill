@@ -32,6 +32,7 @@ func (r *SQLRepository) Create(ctx context.Context, p *domain.Package) error {
 		Name:               p.Name,
 		Price:              p.Price,
 		Period:             p.Period,
+		Type:               p.Type,
 		RateLimit:          nullString(p.RateLimit),
 		AddressPool:        nullString(p.AddressPool),
 		ValiditySeconds:    nullInt64(p.ValiditySeconds),
@@ -98,6 +99,7 @@ func (r *SQLRepository) Update(ctx context.Context, p *domain.Package) error {
 		Name:               p.Name,
 		Price:              p.Price,
 		Period:             p.Period,
+		Type:               p.Type,
 		RateLimit:          nullString(p.RateLimit),
 		AddressPool:        nullString(p.AddressPool),
 		ValiditySeconds:    nullInt64(p.ValiditySeconds),
@@ -148,6 +150,7 @@ func toPackage(row sqlcgen.Package) (*domain.Package, error) {
 		Name:               row.Name,
 		Price:              row.Price,
 		Period:             row.Period,
+		Type:               defaultType(row.Type),
 		RateLimit:          row.RateLimit.String,
 		AddressPool:        row.AddressPool.String,
 		ValiditySeconds:    nullToInt64Ptr(row.ValiditySeconds),
@@ -163,6 +166,15 @@ func toPackage(row sqlcgen.Package) (*domain.Package, error) {
 		CreatedAt:          created,
 		UpdatedAt:          updated,
 	}, nil
+}
+
+// defaultType normalizes the legacy empty value on read so callers only
+// ever see a valid enum (the domain already normalizes on write).
+func defaultType(t string) string {
+	if t == "" {
+		return domain.TypeTime
+	}
+	return t
 }
 
 func nullString(s string) sql.NullString {

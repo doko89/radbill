@@ -263,6 +263,7 @@ type PublicPackage struct {
 	Name               string  `json:"name"`
 	Price              int64   `json:"price"`
 	Period             string  `json:"period"`
+	Type               string  `json:"type"`
 	RateLimit          *string `json:"rate_limit"`
 	AddressPool        *string `json:"address_pool"`
 	ValiditySeconds    *int64  `json:"validity_seconds"`
@@ -285,7 +286,7 @@ func (c *PackageCatalog) ListPublic(ctx context.Context) ([]PublicPackage, error
 	out := make([]PublicPackage, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, PublicPackage{
-			ID: row.ID, Name: row.Name, Price: row.Price, Period: row.Period,
+			ID: row.ID, Name: row.Name, Price: row.Price, Period: row.Period, Type: packageType(row.Type),
 			RateLimit:          nullStr(row.RateLimit),
 			AddressPool:        nullStr(row.AddressPool),
 			ValiditySeconds:    nullInt(row.ValiditySeconds),
@@ -300,6 +301,15 @@ func (c *PackageCatalog) ListPublic(ctx context.Context) ([]PublicPackage, error
 		})
 	}
 	return out, nil
+}
+
+// packageType normalizes the legacy empty value on read (same rule as
+// the packages context: empty means time).
+func packageType(t string) string {
+	if t == "" {
+		return "time"
+	}
+	return t
 }
 
 func nullStr(v sql.NullString) *string {

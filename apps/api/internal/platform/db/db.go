@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,11 @@ func Migrate(ctx context.Context, pool *sql.DB, driver string) error {
 	}
 	// billing Fase 2 (agen C1, ADITIF).
 	if err := ensurePaymentsNoteColumn(ctx, pool, driver); err != nil {
+		return err
+	}
+	// Package type (time|quota|fup): kolom baru + backfill heuristik untuk
+	// baris lama (ada ambang FUP -> fup, ada kuota -> quota, sisanya time).
+	if err := ensurePackagesTypeColumn(ctx, pool, driver); err != nil {
 		return err
 	}
 	// kriskris real-spec alignment: fix the pre-guide default base URL on
@@ -143,6 +149,69 @@ func ensurePaymentsNoteColumn(ctx context.Context, pool *sql.DB, driver string) 
 		return fmt.Errorf("migrate add payments.note: %w", err)
 	}
 	return nil
+}
+
+// ensurePackagesTypeColumn adds packages.type to databases created before
+// the typed-package change, then backfills legacy rows by heuristic
+// (same inspect pattern as ensureAvatarURLColumn; sqlite+postgres safe).
+func ensurePackagesTypeColumn(ctx context.Context, pool *sql.DB, driver string) error {
+	const alter = `ALTER TABLE packages ADD COLUMN type TEXT NOT NULL DEFAULT 'time' CHECK (type IN ('', 'time', 'quota', 'fup'))`
+	found, err := packagesHasTypeColumn(ctx, pool, driver)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := pool.ExecContext(ctx, alter); err != nil {
+		return fmt.Errorf("migrate add packages.type: %w", err)
+	}
+	// Backfill heuristik, sekali saja di sini (ada ambang FUP -> fup, ada
+	// kuota -> quota, sisanya tetap 'time' dari DEFAULT). Pilihan operator
+	// sesudahnya tidak pernah disentuh migrasi.
+	if _, err := pool.ExecContext(ctx, `UPDATE packages SET type='quota' WHERE quota_bytes IS NOT NULL`); err != nil {
+		return fmt.Errorf("migrate backfill package type quota: %w", err)
+	}
+	if _, err := pool.ExecContext(ctx, `UPDATE packages SET type='fup' WHERE fup_threshold_bytes IS NOT NULL`); err != nil {
+		return fmt.Errorf("migrate backfill package type fup: %w", err)
+	}
+	return nil
+}
+
+func packagesHasTypeColumn(ctx context.Context, pool *sql.DB, driver string) (bool, error) {
+	if driver == "postgres" {
+		var name string
+		err := pool.QueryRowContext(ctx, `SELECT column_name FROM information_schema.columns WHERE table_name='packages' AND column_name='type'`).Scan(&name)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("migrate inspect packages: %w", err)
+		}
+		return true, nil
+	}
+	rows, err := pool.QueryContext(ctx, `PRAGMA table_info(packages)`)
+	if err != nil {
+		return false, fmt.Errorf("migrate inspect packages: %w", err)
+	}
+	defer rows.Close()
+	var (
+		cid, notnull, pk int
+		name, typ        string
+		dflt             sql.NullString
+	)
+	for rows.Next() {
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return false, fmt.Errorf("migrate scan packages: %w", err)
+		}
+		if name == "type" {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("migrate inspect packages: %w", err)
+	}
+	return false, nil
 }
 
 // SeedBillingAdmin creates the panel admin account when accounts is empty.

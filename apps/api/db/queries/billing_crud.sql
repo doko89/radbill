@@ -35,12 +35,12 @@ SELECT COUNT(*) FROM packages;
 SELECT * FROM packages WHERE id = $1;
 
 -- name: CreateBillingPackage :one
-INSERT INTO packages (id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+INSERT INTO packages (id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 RETURNING *;
 
 -- name: UpdateBillingPackage :one
-UPDATE packages SET name = $2, price = $3, period = $4, rate_limit = $5, address_pool = $6, validity_seconds = $7, online_seconds_limit = $8, quota_bytes = $9, quota_reset = $10, fup_threshold_bytes = $11, fup_rate_limit = $12, on_exhausted = $13, is_public = $14, allow_self_service = $15, upgrade_group = $16, updated_at = $17
+UPDATE packages SET name = $2, price = $3, period = $4, type = $5, rate_limit = $6, address_pool = $7, validity_seconds = $8, online_seconds_limit = $9, quota_bytes = $10, quota_reset = $11, fup_threshold_bytes = $12, fup_rate_limit = $13, on_exhausted = $14, is_public = $15, allow_self_service = $16, upgrade_group = $17, updated_at = $18
 WHERE id = $1
 RETURNING *;
 

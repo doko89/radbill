@@ -50,6 +50,7 @@ type packageRequest struct {
 	Name               string `json:"name"`
 	Price              int64  `json:"price"`
 	Period             string `json:"period"`
+	Type               string `json:"type"`
 	RateLimit          string `json:"rate_limit"`
 	AddressPool        string `json:"address_pool"`
 	ValiditySeconds    *int64 `json:"validity_seconds"`
@@ -129,7 +130,7 @@ func toInput(req packageRequest, boolDefault bool) pkgapp.DetailsInput {
 		selfService = *req.AllowSelfService
 	}
 	return pkgapp.DetailsInput{
-		Name: req.Name, Price: req.Price, Period: req.Period,
+		Name: req.Name, Price: req.Price, Period: req.Period, Type: req.Type,
 		RateLimit: req.RateLimit, AddressPool: req.AddressPool,
 		ValiditySeconds: req.ValiditySeconds, OnlineSecondsLimit: req.OnlineSecondsLimit,
 		QuotaBytes: req.QuotaBytes, QuotaReset: req.QuotaReset,

@@ -21,7 +21,14 @@ import {
   TR,
 } from "../../../shared/ui/billing-ui";
 import { PackageDialog } from "../components/PackageDialog";
-import { deletePackage, listPackages, packageName, packagePeriod, packagePrice } from "../api";
+import {
+  deletePackage,
+  listPackages,
+  packageName,
+  packagePeriod,
+  packagePrice,
+  packageTypeLabel,
+} from "../api";
 import type { BillingPackage } from "../api";
 
 const PER_PAGE = 20;
@@ -121,6 +128,7 @@ export function PackagesPage() {
               <TR>
                 <TH>Nama</TH>
                 <TH>Harga</TH>
+                <TH>Tipe</TH>
                 <TH>Kuota</TH>
                 <TH>Validity</TH>
                 <TH>Periode</TH>
@@ -135,6 +143,7 @@ export function PackagesPage() {
                     {pkg.is_public === true && <Badge tone="info">publik</Badge>}
                   </TD>
                   <TD muted>{formatIDR(packagePrice(pkg))}</TD>
+                  <TD muted>{packageTypeLabel(pkg)}</TD>
                   <TD muted>
                     {pkg.quota_bytes === null || pkg.quota_bytes === undefined
                       ? "tanpa batas"

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS packages (
     name                 TEXT NOT NULL,
     price                BIGINT NOT NULL,
     period               TEXT NOT NULL,
+    type                 TEXT NOT NULL DEFAULT 'time' CHECK (type IN ('', 'time', 'quota', 'fup')),
     rate_limit           TEXT,
     address_pool         TEXT,
     validity_seconds     BIGINT,

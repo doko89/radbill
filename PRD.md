@@ -117,11 +117,12 @@ Dua domain yang terpisah total:
 - Relasi pelanggan ke akun PPPoE **1:N** (satu pelanggan boleh punya beberapa akun/lokasi). Tagihan dibuat per akun PPPoE. *(Lihat pertanyaan terbuka #1.)*
 
 ### 6.2 Paket
-Paket adalah kombinasi komponen opsional, bukan tipe eksklusif. Tipe (quota/time/FUP) hanya preset di UI.
+Paket punya `type` tersimpan: `time` (time based) | `quota` (kuota based) | `fup` (FUP based). Form admin menyesuaikan field batas mengikuti tipe; API menerima tipe kosong (legacy → `time`) dan menolak nilai di luar enum.
 
 | Atribut | Keterangan |
 |---|---|
 | `nama`, `harga`, `periode` | Umum |
+| `type` | `time` \| `quota` \| `fup` |
 | `rate_limit` | Kecepatan normal (`Mikrotik-Rate-Limit`) |
 | `address_pool` | Pool IP |
 | `validity_seconds` | Masa berlaku sejak aktivasi/perpanjangan (nullable) |

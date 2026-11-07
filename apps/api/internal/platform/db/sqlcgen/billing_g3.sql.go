@@ -516,7 +516,7 @@ func (q *Queries) ListPlanChangesByCustomer(ctx context.Context, arg ListPlanCha
 }
 
 const listPublicPackages = `-- name: ListPublicPackages :many
-SELECT id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages WHERE is_public = 1 ORDER BY price ASC, name ASC, id ASC
+SELECT id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages WHERE is_public = 1 ORDER BY price ASC, name ASC, id ASC
 `
 
 func (q *Queries) ListPublicPackages(ctx context.Context) ([]Package, error) {
@@ -533,6 +533,7 @@ func (q *Queries) ListPublicPackages(ctx context.Context) ([]Package, error) {
 			&i.Name,
 			&i.Price,
 			&i.Period,
+			&i.Type,
 			&i.RateLimit,
 			&i.AddressPool,
 			&i.ValiditySeconds,

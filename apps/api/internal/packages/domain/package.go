@@ -24,6 +24,13 @@ const (
 	OnExhaustedThrottle = "throttle"
 )
 
+// Package types: basis pembatasan utama paket.
+const (
+	TypeTime  = "time"
+	TypeQuota = "quota"
+	TypeFUP   = "fup"
+)
+
 var (
 	// ErrPackageNotFound is returned when the package does not exist.
 	ErrPackageNotFound = errors.New("package not found")
@@ -32,12 +39,15 @@ var (
 )
 
 // Package is a sellable combo of rate, validity, quota, and FUP rules.
-// All components are optional; type (quota/time/FUP) is only a UI preset.
+// Type selects the primary limit basis; per-type field completeness is
+// enforced by the UI, the API only validates the enum (empty = legacy,
+// normalized to TypeTime) so older clients keep working.
 type Package struct {
 	ID                 string
 	Name               string
 	Price              int64
 	Period             string
+	Type               string
 	RateLimit          string
 	AddressPool        string
 	ValiditySeconds    *int64
@@ -59,6 +69,7 @@ type Details struct {
 	Name               string
 	Price              int64
 	Period             string
+	Type               string
 	RateLimit          string
 	AddressPool        string
 	ValiditySeconds    *int64
@@ -102,6 +113,13 @@ func (p *Package) SetDetails(d Details, now time.Time) error {
 	if len(d.Period) > 32 {
 		return apperr.Invalid("period", "max 32 characters")
 	}
+	switch d.Type {
+	case "", TypeTime:
+		d.Type = TypeTime
+	case TypeQuota, TypeFUP:
+	default:
+		return apperr.Invalid("type", "must be time|quota|fup")
+	}
 	if len(d.RateLimit) > 64 {
 		return apperr.Invalid("rate_limit", "max 64 characters")
 	}
@@ -139,6 +157,7 @@ func (p *Package) SetDetails(d Details, now time.Time) error {
 	p.Name = d.Name
 	p.Price = d.Price
 	p.Period = d.Period
+	p.Type = d.Type
 	p.RateLimit = d.RateLimit
 	p.AddressPool = d.AddressPool
 	p.ValiditySeconds = d.ValiditySeconds

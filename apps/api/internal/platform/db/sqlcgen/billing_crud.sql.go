@@ -209,9 +209,9 @@ func (q *Queries) CreateBillingPPPoE(ctx context.Context, arg CreateBillingPPPoE
 }
 
 const createBillingPackage = `-- name: CreateBillingPackage :one
-INSERT INTO packages (id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-RETURNING id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at
+INSERT INTO packages (id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+RETURNING id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at
 `
 
 type CreateBillingPackageParams struct {
@@ -219,6 +219,7 @@ type CreateBillingPackageParams struct {
 	Name               string         `json:"name"`
 	Price              int64          `json:"price"`
 	Period             string         `json:"period"`
+	Type               string         `json:"type"`
 	RateLimit          sql.NullString `json:"rate_limit"`
 	AddressPool        sql.NullString `json:"address_pool"`
 	ValiditySeconds    sql.NullInt64  `json:"validity_seconds"`
@@ -241,6 +242,7 @@ func (q *Queries) CreateBillingPackage(ctx context.Context, arg CreateBillingPac
 		arg.Name,
 		arg.Price,
 		arg.Period,
+		arg.Type,
 		arg.RateLimit,
 		arg.AddressPool,
 		arg.ValiditySeconds,
@@ -262,6 +264,7 @@ func (q *Queries) CreateBillingPackage(ctx context.Context, arg CreateBillingPac
 		&i.Name,
 		&i.Price,
 		&i.Period,
+		&i.Type,
 		&i.RateLimit,
 		&i.AddressPool,
 		&i.ValiditySeconds,
@@ -430,7 +433,7 @@ func (q *Queries) GetBillingPPPoEByUsername(ctx context.Context, username string
 }
 
 const getBillingPackage = `-- name: GetBillingPackage :one
-SELECT id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages WHERE id = $1
+SELECT id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages WHERE id = $1
 `
 
 func (q *Queries) GetBillingPackage(ctx context.Context, id string) (Package, error) {
@@ -441,6 +444,7 @@ func (q *Queries) GetBillingPackage(ctx context.Context, id string) (Package, er
 		&i.Name,
 		&i.Price,
 		&i.Period,
+		&i.Type,
 		&i.RateLimit,
 		&i.AddressPool,
 		&i.ValiditySeconds,
@@ -692,7 +696,7 @@ func (q *Queries) ListBillingPPPoEByCustomer(ctx context.Context, customerID str
 }
 
 const listBillingPackages = `-- name: ListBillingPackages :many
-SELECT id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2
+SELECT id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at FROM packages ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2
 `
 
 type ListBillingPackagesParams struct {
@@ -714,6 +718,7 @@ func (q *Queries) ListBillingPackages(ctx context.Context, arg ListBillingPackag
 			&i.Name,
 			&i.Price,
 			&i.Period,
+			&i.Type,
 			&i.RateLimit,
 			&i.AddressPool,
 			&i.ValiditySeconds,
@@ -1006,9 +1011,9 @@ func (q *Queries) UpdateBillingPPPoE(ctx context.Context, arg UpdateBillingPPPoE
 }
 
 const updateBillingPackage = `-- name: UpdateBillingPackage :one
-UPDATE packages SET name = $2, price = $3, period = $4, rate_limit = $5, address_pool = $6, validity_seconds = $7, online_seconds_limit = $8, quota_bytes = $9, quota_reset = $10, fup_threshold_bytes = $11, fup_rate_limit = $12, on_exhausted = $13, is_public = $14, allow_self_service = $15, upgrade_group = $16, updated_at = $17
+UPDATE packages SET name = $2, price = $3, period = $4, type = $5, rate_limit = $6, address_pool = $7, validity_seconds = $8, online_seconds_limit = $9, quota_bytes = $10, quota_reset = $11, fup_threshold_bytes = $12, fup_rate_limit = $13, on_exhausted = $14, is_public = $15, allow_self_service = $16, upgrade_group = $17, updated_at = $18
 WHERE id = $1
-RETURNING id, name, price, period, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at
+RETURNING id, name, price, period, type, rate_limit, address_pool, validity_seconds, online_seconds_limit, quota_bytes, quota_reset, fup_threshold_bytes, fup_rate_limit, on_exhausted, is_public, allow_self_service, upgrade_group, created_at, updated_at
 `
 
 type UpdateBillingPackageParams struct {
@@ -1016,6 +1021,7 @@ type UpdateBillingPackageParams struct {
 	Name               string         `json:"name"`
 	Price              int64          `json:"price"`
 	Period             string         `json:"period"`
+	Type               string         `json:"type"`
 	RateLimit          sql.NullString `json:"rate_limit"`
 	AddressPool        sql.NullString `json:"address_pool"`
 	ValiditySeconds    sql.NullInt64  `json:"validity_seconds"`
@@ -1037,6 +1043,7 @@ func (q *Queries) UpdateBillingPackage(ctx context.Context, arg UpdateBillingPac
 		arg.Name,
 		arg.Price,
 		arg.Period,
+		arg.Type,
 		arg.RateLimit,
 		arg.AddressPool,
 		arg.ValiditySeconds,
@@ -1057,6 +1064,7 @@ func (q *Queries) UpdateBillingPackage(ctx context.Context, arg UpdateBillingPac
 		&i.Name,
 		&i.Price,
 		&i.Period,
+		&i.Type,
 		&i.RateLimit,
 		&i.AddressPool,
 		&i.ValiditySeconds,

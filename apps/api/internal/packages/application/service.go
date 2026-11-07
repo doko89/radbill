@@ -15,6 +15,7 @@ type PackageDTO struct {
 	Name               string  `json:"name"`
 	Price              int64   `json:"price"`
 	Period             string  `json:"period"`
+	Type               string  `json:"type"`
 	RateLimit          *string `json:"rate_limit"`
 	AddressPool        *string `json:"address_pool"`
 	ValiditySeconds    *int64  `json:"validity_seconds"`
@@ -36,6 +37,7 @@ type DetailsInput struct {
 	Name               string
 	Price              int64
 	Period             string
+	Type               string
 	RateLimit          string
 	AddressPool        string
 	ValiditySeconds    *int64
@@ -121,7 +123,7 @@ func (s *Service) Delete(ctx context.Context, pid string) error {
 
 func toDetails(in DetailsInput) domain.Details {
 	return domain.Details{
-		Name: in.Name, Price: in.Price, Period: in.Period,
+		Name: in.Name, Price: in.Price, Period: in.Period, Type: in.Type,
 		RateLimit: in.RateLimit, AddressPool: in.AddressPool,
 		ValiditySeconds: in.ValiditySeconds, OnlineSecondsLimit: in.OnlineSecondsLimit,
 		QuotaBytes: in.QuotaBytes, QuotaReset: in.QuotaReset,
@@ -133,7 +135,7 @@ func toDetails(in DetailsInput) domain.Details {
 
 func toDTO(p *domain.Package) PackageDTO {
 	return PackageDTO{
-		ID: p.ID, Name: p.Name, Price: p.Price, Period: p.Period,
+		ID: p.ID, Name: p.Name, Price: p.Price, Period: p.Period, Type: p.Type,
 		RateLimit: nullStr(p.RateLimit), AddressPool: nullStr(p.AddressPool),
 		ValiditySeconds: p.ValiditySeconds, OnlineSecondsLimit: p.OnlineSecondsLimit,
 		QuotaBytes: p.QuotaBytes, QuotaReset: p.QuotaReset,

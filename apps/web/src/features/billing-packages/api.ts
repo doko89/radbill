@@ -2,7 +2,20 @@ import { z } from "zod";
 import { billingRequest, billingUpdate, withQuery } from "../../shared/lib/billing-api";
 import { firstNumber, firstText } from "../../shared/lib/billing-format";
 
-/** Paket = kombinasi komponen opsional (PRD §6.2), bukan tipe eksklusif. */
+/** Tipe paket = basis pembatasan utama (PRD §6.2). */
+export const PACKAGE_TYPES = ["time", "quota", "fup"] as const;
+export type PackageType = (typeof PACKAGE_TYPES)[number];
+
+export const PACKAGE_TYPE_META: Record<PackageType, { title: string; desc: string }> = {
+  time: { title: "Time based", desc: "Batasan jatah jam online." },
+  quota: { title: "Kuota based", desc: "Batasan kuota data per periode." },
+  fup: { title: "FUP based", desc: "Kecepatan penuh sampai ambang, lalu turun." },
+};
+
+export function isPackageType(value: unknown): value is PackageType {
+  return value === "time" || value === "quota" || value === "fup";
+}
+
 export const packageSchema = z.object({
   id: z.string(),
   nama: z.string().nullish(),
@@ -11,6 +24,7 @@ export const packageSchema = z.object({
   price: z.number().nullish(),
   periode: z.string().nullish(),
   period: z.string().nullish(),
+  type: z.string().nullish(),
   rate_limit: z.string().nullish(),
   address_pool: z.string().nullish(),
   validity_seconds: z.number().nullish(),
@@ -56,6 +70,7 @@ export async function getPackage(id: string): Promise<BillingPackage> {
 
 export type PackageFormInput = {
   nama: string;
+  type: PackageType;
   harga?: number | undefined;
   periode?: string | undefined;
   rate_limit?: string | undefined;
@@ -73,7 +88,11 @@ export type PackageFormInput = {
 };
 
 function packageBody(input: PackageFormInput): Record<string, string | number | boolean> {
-  const body: Record<string, string | number | boolean> = { nama: input.nama, name: input.nama };
+  const body: Record<string, string | number | boolean> = {
+    nama: input.nama,
+    name: input.nama,
+    type: input.type,
+  };
   if (input.harga !== undefined) {
     body["harga"] = input.harga;
     body["price"] = input.harga;
@@ -152,4 +171,26 @@ export function packagePrice(pkg: BillingPackage): number | null {
 
 export function packagePeriod(pkg: BillingPackage): string {
   return firstText(pkg.periode, pkg.period);
+}
+
+/**
+ * Tipe efektif paket. Baris lama tanpa `type` diinferensikan dari field
+ * yang terisi (ada ambang FUP → fup, ada kuota → quota, sisanya time)
+ * agar dialog ubah membuka tipe yang benar.
+ */
+export function packageTypeOf(pkg: BillingPackage | null): PackageType {
+  if (pkg && isPackageType(pkg.type)) {
+    return pkg.type;
+  }
+  if (pkg?.fup_threshold_bytes !== null && pkg?.fup_threshold_bytes !== undefined) {
+    return "fup";
+  }
+  if (pkg?.quota_bytes !== null && pkg?.quota_bytes !== undefined) {
+    return "quota";
+  }
+  return "time";
+}
+
+export function packageTypeLabel(pkg: BillingPackage): string {
+  return PACKAGE_TYPE_META[packageTypeOf(pkg)].title;
 }

@@ -105,6 +105,7 @@ type Package struct {
 	Name               string         `json:"name"`
 	Price              int64          `json:"price"`
 	Period             string         `json:"period"`
+	Type               string         `json:"type"`
 	RateLimit          sql.NullString `json:"rate_limit"`
 	AddressPool        sql.NullString `json:"address_pool"`
 	ValiditySeconds    sql.NullInt64  `json:"validity_seconds"`
