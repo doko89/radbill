@@ -46,6 +46,9 @@ func run() error {
 	if err := db.SeedAdmin(ctx, queriesOf(pool), cfg.AdminUser, cfg.AdminPass, bcrypt.DefaultCost); err != nil {
 		return err
 	}
+	if err := db.SeedBillingAdmin(ctx, queriesOf(pool), cfg.AdminUser, cfg.AdminPass); err != nil {
+		return err
+	}
 
 	app, err := httpserver.New(cfg, pool)
 	if err != nil {

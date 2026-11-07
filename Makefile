@@ -56,3 +56,12 @@ smoke: ## Probe a running server on :3000 (CSRF cookie + CSP header)
 	curl -s -c /tmp/smoke.jar -D - -o /dev/null http://localhost:3000/api/auth/csrf | grep -iE '^HTTP|content-security-policy:|set-cookie:' | head -5
 	@echo "== POST /api/auth/login without CSRF (expect 403) =="
 	curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}'
+
+# --- radbill Fase 1 (agen B1, ADITIF): radiusd milik agen radiusd ---
+.PHONY: build-radiusd dev-radiusd
+
+build-radiusd: ## Build radiusd binary -> ./bin/radiusd
+	cd $(API_DIR) && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../bin/radiusd ./cmd/radiusd
+
+dev-radiusd: ## Run radiusd via go run
+	cd $(API_DIR) && go run ./cmd/radiusd

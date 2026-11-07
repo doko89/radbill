@@ -4,6 +4,63 @@
 
 package sqlcgen
 
+import (
+	"database/sql"
+)
+
+type Account struct {
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type Customer struct {
+	ID        string         `json:"id"`
+	AccountID sql.NullString `json:"account_id"`
+	Name      string         `json:"name"`
+	Phone     sql.NullString `json:"phone"`
+	Address   sql.NullString `json:"address"`
+	Notes     sql.NullString `json:"notes"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+}
+
+type Invoice struct {
+	ID             string         `json:"id"`
+	Number         string         `json:"number"`
+	PppoeAccountID string         `json:"pppoe_account_id"`
+	CustomerID     string         `json:"customer_id"`
+	Total          int64          `json:"total"`
+	DueDate        string         `json:"due_date"`
+	Status         string         `json:"status"`
+	IssuedAt       string         `json:"issued_at"`
+	PaidAt         sql.NullString `json:"paid_at"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
+}
+
+type InvoiceItem struct {
+	ID          string `json:"id"`
+	InvoiceID   string `json:"invoice_id"`
+	Description string `json:"description"`
+	Qty         int64  `json:"qty"`
+	Price       int64  `json:"price"`
+}
+
+type Na struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Ip        string `json:"ip"`
+	Secret    string `json:"secret"`
+	CoaPort   int32  `json:"coa_port"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type OidcLink struct {
 	UserID    string `json:"user_id"`
 	Issuer    string `json:"issuer"`
@@ -18,6 +75,97 @@ type Order struct {
 	Qty       int64  `json:"qty"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+}
+
+type Package struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Price              int64          `json:"price"`
+	Period             string         `json:"period"`
+	RateLimit          sql.NullString `json:"rate_limit"`
+	AddressPool        sql.NullString `json:"address_pool"`
+	ValiditySeconds    sql.NullInt64  `json:"validity_seconds"`
+	OnlineSecondsLimit sql.NullInt64  `json:"online_seconds_limit"`
+	QuotaBytes         sql.NullInt64  `json:"quota_bytes"`
+	QuotaReset         string         `json:"quota_reset"`
+	FupThresholdBytes  sql.NullInt64  `json:"fup_threshold_bytes"`
+	FupRateLimit       sql.NullString `json:"fup_rate_limit"`
+	OnExhausted        string         `json:"on_exhausted"`
+	IsPublic           int32          `json:"is_public"`
+	AllowSelfService   int32          `json:"allow_self_service"`
+	UpgradeGroup       sql.NullString `json:"upgrade_group"`
+	CreatedAt          string         `json:"created_at"`
+	UpdatedAt          string         `json:"updated_at"`
+}
+
+type PasswordReset struct {
+	ID        string         `json:"id"`
+	AccountID string         `json:"account_id"`
+	TokenHash string         `json:"token_hash"`
+	ExpiresAt string         `json:"expires_at"`
+	UsedAt    sql.NullString `json:"used_at"`
+	CreatedAt string         `json:"created_at"`
+}
+
+type Payment struct {
+	ID        string         `json:"id"`
+	InvoiceID string         `json:"invoice_id"`
+	Amount    int64          `json:"amount"`
+	Method    string         `json:"method"`
+	AttemptID sql.NullString `json:"attempt_id"`
+	PaidAt    string         `json:"paid_at"`
+	CreatedAt string         `json:"created_at"`
+}
+
+type PppoeAccount struct {
+	ID         string         `json:"id"`
+	CustomerID string         `json:"customer_id"`
+	PackageID  string         `json:"package_id"`
+	NasID      sql.NullString `json:"nas_id"`
+	Username   string         `json:"username"`
+	Password   string         `json:"password"`
+	Status     string         `json:"status"`
+	ExpiresAt  sql.NullString `json:"expires_at"`
+	StaticIp   sql.NullString `json:"static_ip"`
+	CreatedAt  string         `json:"created_at"`
+	UpdatedAt  string         `json:"updated_at"`
+}
+
+type RadiusSession struct {
+	ID             string         `json:"id"`
+	SessionID      string         `json:"session_id"`
+	PppoeAccountID string         `json:"pppoe_account_id"`
+	NasID          string         `json:"nas_id"`
+	FramedIp       sql.NullString `json:"framed_ip"`
+	StartedAt      string         `json:"started_at"`
+	StoppedAt      sql.NullString `json:"stopped_at"`
+	BytesIn        int64          `json:"bytes_in"`
+	BytesOut       int64          `json:"bytes_out"`
+	TerminateCause sql.NullString `json:"terminate_cause"`
+	UpdatedAt      string         `json:"updated_at"`
+}
+
+type RefreshToken struct {
+	ID        string         `json:"id"`
+	AccountID string         `json:"account_id"`
+	TokenHash string         `json:"token_hash"`
+	ExpiresAt string         `json:"expires_at"`
+	RevokedAt sql.NullString `json:"revoked_at"`
+	CreatedAt string         `json:"created_at"`
+}
+
+type Setting struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type UsageCounter struct {
+	PppoeAccountID string `json:"pppoe_account_id"`
+	PeriodStart    string `json:"period_start"`
+	BytesIn        int64  `json:"bytes_in"`
+	BytesOut       int64  `json:"bytes_out"`
+	OnlineSeconds  int64  `json:"online_seconds"`
 }
 
 type User struct {

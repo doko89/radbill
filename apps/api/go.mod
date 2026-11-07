@@ -11,6 +11,7 @@ require (
 	github.com/minio/minio-go/v7 v7.4.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.37.0
+	layeh.com/radius v0.0.0-20231213012653-1006025d24f8
 	modernc.org/sqlite v1.62.0
 )
 

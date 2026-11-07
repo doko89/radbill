@@ -15,6 +15,9 @@ import (
 	_ "modernc.org/sqlite"
 
 	"boilerplate/api/internal/platform/db/sqlcgen"
+
+	authdomain "boilerplate/api/internal/jwtauth/domain"
+	authinfra "boilerplate/api/internal/jwtauth/infrastructure"
 )
 
 //go:embed schema.sql
@@ -93,6 +96,36 @@ func ensureAvatarURLColumn(ctx context.Context, pool *sql.DB, driver string) err
 	}
 	if _, err := pool.ExecContext(ctx, alter); err != nil {
 		return fmt.Errorf("migrate add avatar_url: %w", err)
+	}
+	return nil
+}
+
+// SeedBillingAdmin creates the panel admin account when accounts is empty.
+// It is separate from the legacy users seed and uses argon2id hashing.
+func SeedBillingAdmin(ctx context.Context, q *sqlcgen.Queries, username, password string) error {
+	n, err := q.CountBillingAccounts(ctx)
+	if err != nil {
+		return fmt.Errorf("seed count accounts: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	hash, err := authinfra.NewArgon2Hasher().Hash(password)
+	if err != nil {
+		return fmt.Errorf("seed hash password: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = q.CreateBillingAccount(ctx, sqlcgen.CreateBillingAccountParams{
+		ID:           "billing-admin-seed-1",
+		Username:     username,
+		PasswordHash: hash,
+		Role:         authdomain.RoleAdmin,
+		Status:       authdomain.StatusActive,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		return fmt.Errorf("seed create billing admin: %w", err)
 	}
 	return nil
 }

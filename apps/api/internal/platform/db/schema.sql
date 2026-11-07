@@ -30,3 +30,159 @@ CREATE TABLE IF NOT EXISTS oidc_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oidc_links_user_id ON oidc_links (user_id);
+
+-- billing Fase 1 (radbill, ADITIF): tabel di bawah ini dipakai billing + radiusd.
+-- Jangan ubah nama tabel/kolom (kontrak antar-agen).
+CREATE TABLE IF NOT EXISTS accounts (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+    status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id          TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TEXT NOT NULL,
+    revoked_at  TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+    id          TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS customers (
+    id          TEXT PRIMARY KEY,
+    account_id  TEXT UNIQUE REFERENCES accounts (id) ON DELETE SET NULL,
+    name        TEXT NOT NULL,
+    phone       TEXT,
+    address     TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS packages (
+    id                   TEXT PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    price                BIGINT NOT NULL,
+    period               TEXT NOT NULL,
+    rate_limit           TEXT,
+    address_pool         TEXT,
+    validity_seconds     BIGINT,
+    online_seconds_limit BIGINT,
+    quota_bytes          BIGINT,
+    quota_reset          TEXT NOT NULL DEFAULT 'none' CHECK (quota_reset IN ('none', 'daily', 'monthly', 'billing_cycle')),
+    fup_threshold_bytes  BIGINT,
+    fup_rate_limit       TEXT,
+    on_exhausted         TEXT NOT NULL DEFAULT 'reject' CHECK (on_exhausted IN ('reject', 'isolate', 'throttle')),
+    is_public            INTEGER NOT NULL DEFAULT 1,
+    allow_self_service   INTEGER NOT NULL DEFAULT 1,
+    upgrade_group        TEXT,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS nas (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    ip         TEXT NOT NULL UNIQUE,
+    secret     TEXT NOT NULL,
+    coa_port   INTEGER NOT NULL DEFAULT 3799,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pppoe_accounts (
+    id          TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL REFERENCES customers (id),
+    package_id  TEXT NOT NULL REFERENCES packages (id),
+    nas_id      TEXT REFERENCES nas (id) ON DELETE SET NULL,
+    username    TEXT NOT NULL UNIQUE,
+    password    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'isolated', 'disabled')),
+    expires_at  TEXT,
+    static_ip   TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pppoe_accounts_username ON pppoe_accounts (username);
+
+CREATE TABLE IF NOT EXISTS radius_sessions (
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    pppoe_account_id TEXT NOT NULL REFERENCES pppoe_accounts (id),
+    nas_id           TEXT NOT NULL REFERENCES nas (id),
+    framed_ip        TEXT,
+    started_at       TEXT NOT NULL,
+    stopped_at       TEXT,
+    bytes_in         BIGINT NOT NULL DEFAULT 0,
+    bytes_out        BIGINT NOT NULL DEFAULT 0,
+    terminate_cause  TEXT,
+    updated_at       TEXT NOT NULL,
+    UNIQUE (session_id, nas_id)
+);
+
+CREATE TABLE IF NOT EXISTS usage_counters (
+    pppoe_account_id TEXT NOT NULL REFERENCES pppoe_accounts (id),
+    period_start     TEXT NOT NULL,
+    bytes_in         BIGINT NOT NULL DEFAULT 0,
+    bytes_out        BIGINT NOT NULL DEFAULT 0,
+    online_seconds   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (pppoe_account_id, period_start)
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id               TEXT PRIMARY KEY,
+    number           TEXT NOT NULL UNIQUE,
+    pppoe_account_id TEXT NOT NULL REFERENCES pppoe_accounts (id),
+    customer_id      TEXT NOT NULL REFERENCES customers (id),
+    total            BIGINT NOT NULL,
+    due_date         TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid', 'paid', 'void')),
+    issued_at        TEXT NOT NULL,
+    paid_at          TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_status_due ON invoices (status, due_date);
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+    id          TEXT PRIMARY KEY,
+    invoice_id  TEXT NOT NULL REFERENCES invoices (id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    qty         BIGINT NOT NULL DEFAULT 1,
+    price       BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id         TEXT PRIMARY KEY,
+    invoice_id TEXT NOT NULL REFERENCES invoices (id),
+    amount     BIGINT NOT NULL,
+    method     TEXT NOT NULL CHECK (method IN ('kriskris', 'manual')),
+    attempt_id TEXT,
+    paid_at    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+INSERT INTO settings (key, value, updated_at) VALUES ('acct_interim_interval', '300', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('isolir_rate_limit', '128k/128k', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;
+INSERT INTO settings (key, value, updated_at) VALUES ('isolir_address_list', 'isolir', '2026-01-01T00:00:00Z') ON CONFLICT(key) DO NOTHING;

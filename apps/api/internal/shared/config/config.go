@@ -29,6 +29,11 @@ type Config struct {
 	UploadDir     string
 	StorageDriver string // local | s3
 	S3            S3Config
+	// Billing Fase 1 (radbill, ADITIF).
+	JWTSecret           string
+	JWTAccessTTLMinutes int
+	RefreshTTLDays      int
+	TZ                  string
 }
 
 // OIDCConfig enables external login (Google or any OIDC provider).
@@ -80,6 +85,16 @@ type LDAPConfig struct {
 // IsProd reports whether the app runs in production mode.
 func (c Config) IsProd() bool { return c.Env == "prod" }
 
+// JWTAccessTTL returns the access-token lifetime.
+func (c Config) JWTAccessTTL() time.Duration {
+	return time.Duration(c.JWTAccessTTLMinutes) * time.Minute
+}
+
+// RefreshTTL returns the refresh-token lifetime.
+func (c Config) RefreshTTL() time.Duration {
+	return time.Duration(c.RefreshTTLDays) * 24 * time.Hour
+}
+
 // Load reads .env (if found upward from cwd) then resolves Config.
 // Explicit environment variables always win over .env values.
 func Load() (Config, error) {
@@ -96,6 +111,8 @@ func Load() (Config, error) {
 		AdminPass:     get("ADMIN_PASS", ""),
 		UploadDir:     get("UPLOAD_DIR", "./data/uploads"),
 		StorageDriver: get("STORAGE_DRIVER", "local"),
+		JWTSecret:     get("JWT_SECRET", ""),
+		TZ:            get("TZ", "Asia/Jakarta"),
 		S3: S3Config{
 			Endpoint:  get("S3_ENDPOINT", ""),
 			Region:    get("S3_REGION", "us-east-1"),
@@ -111,6 +128,22 @@ func Load() (Config, error) {
 		return Config{}, errors.New("SESSION_TTL_HOURS must be a positive integer")
 	}
 	cfg.SessionTTL = time.Duration(ttlHours) * time.Hour
+
+	cfg.JWTAccessTTLMinutes, err = strconv.Atoi(get("JWT_ACCESS_TTL_MINUTES", "15"))
+	if err != nil || cfg.JWTAccessTTLMinutes <= 0 {
+		return Config{}, errors.New("JWT_ACCESS_TTL_MINUTES must be a positive integer")
+	}
+	cfg.RefreshTTLDays, err = strconv.Atoi(get("REFRESH_TTL_DAYS", "30"))
+	if err != nil || cfg.RefreshTTLDays <= 0 {
+		return Config{}, errors.New("REFRESH_TTL_DAYS must be a positive integer")
+	}
+	if cfg.JWTSecret == "" {
+		if cfg.IsProd() {
+			return Config{}, errors.New("JWT_SECRET is required in prod")
+		}
+		cfg.JWTSecret = "dev-only-insecure-jwt-secret"
+		fmt.Fprintln(os.Stderr, "WARN: using insecure dev JWT_SECRET, set it in .env")
+	}
 
 	switch cfg.DBDriver {
 	case "sqlite", "postgres":

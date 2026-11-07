@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/csrf"
@@ -20,11 +21,35 @@ import (
 	authapp "boilerplate/api/internal/auth/application"
 	authinfra "boilerplate/api/internal/auth/infrastructure"
 	authpres "boilerplate/api/internal/auth/presentation"
+	billapp "boilerplate/api/internal/billing/application"
+	billinfra "boilerplate/api/internal/billing/infrastructure"
+	billpres "boilerplate/api/internal/billing/presentation"
+	custapp "boilerplate/api/internal/customers/application"
+	custinfra "boilerplate/api/internal/customers/infrastructure"
+	custpres "boilerplate/api/internal/customers/presentation"
+	jwtapp "boilerplate/api/internal/jwtauth/application"
+	jwtauthdomain "boilerplate/api/internal/jwtauth/domain"
+	jwtinfra "boilerplate/api/internal/jwtauth/infrastructure"
+	jwtpres "boilerplate/api/internal/jwtauth/presentation"
+	nasapp "boilerplate/api/internal/nas/application"
+	nasinfra "boilerplate/api/internal/nas/infrastructure"
+	naspres "boilerplate/api/internal/nas/presentation"
+	"boilerplate/api/internal/network/coa"
+	"boilerplate/api/internal/network/notify"
 	orderapp "boilerplate/api/internal/order/application"
 	orderinfra "boilerplate/api/internal/order/infrastructure"
 	orderpres "boilerplate/api/internal/order/presentation"
+	pkgapp "boilerplate/api/internal/packages/application"
+	pkginfra "boilerplate/api/internal/packages/infrastructure"
+	pkgpres "boilerplate/api/internal/packages/presentation"
 	"boilerplate/api/internal/platform/db/sqlcgen"
 	"boilerplate/api/internal/platform/session"
+	pppoeapp "boilerplate/api/internal/pppoe/application"
+	pppoeinfra "boilerplate/api/internal/pppoe/infrastructure"
+	pppoepres "boilerplate/api/internal/pppoe/presentation"
+	sessapp "boilerplate/api/internal/sessions/application"
+	sessinfra "boilerplate/api/internal/sessions/infrastructure"
+	sesspres "boilerplate/api/internal/sessions/presentation"
 	"boilerplate/api/internal/shared/config"
 	"boilerplate/api/web"
 )
@@ -140,6 +165,11 @@ func NewWithFS(cfg config.Config, pool *sql.DB, dist fs.FS) (*fiber.App, error) 
 
 	app.Get("/uploads/*", serveUploads(avatarStorage))
 
+	// Billing Fase 1 (radbill, ADITIF): liveness probe + JWT/billing routes.
+	// API routes stay under /api so CSRF + helmet + error handling apply.
+	app.Get("/healthz", healthz(pool))
+	registerBillingRoutes(api, cfg, pool)
+
 	app.Use(static.New("/", static.Config{
 		FS:     dist,
 		MaxAge: 0,
@@ -201,4 +231,113 @@ func jsonErrorHandler(c fiber.Ctx, err error) error {
 		return c.Status(code).JSON(fiber.Map{"error": "not found"})
 	}
 	return c.Status(code).JSON(fiber.Map{"error": "internal error"})
+}
+
+// healthz reports liveness plus DB reachability.
+func healthz(pool *sql.DB) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		ctx, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.PingContext(ctx); err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "degraded"})
+		}
+		return c.JSON(fiber.Map{"status": "ok"})
+	}
+}
+
+// registerBillingRoutes wires billing Fase 1 contexts (ADITIF).
+func registerBillingRoutes(api fiber.Router, cfg config.Config, pool *sql.DB) {
+	queries := sqlcgen.New(pool)
+	events := notify.New(pool, cfg.DBDriver)
+	coaSender := coa.NewSender(coa.DefaultTimeout)
+	hasher := jwtinfra.NewArgon2Hasher()
+
+	authSvc := jwtapp.NewService(
+		jwtinfra.NewSQLAccountRepository(queries),
+		jwtinfra.NewSQLRefreshTokenRepository(queries),
+		jwtinfra.NewSQLPasswordResetRepository(queries),
+		hasher, cfg.JWTSecret, cfg.JWTAccessTTL(), cfg.RefreshTTL(),
+	)
+	authHandler := jwtpres.NewHandler(authSvc, cfg.RefreshTTL(), cfg.IsProd(), !cfg.IsProd())
+
+	v1 := api.Group("/v1")
+	auth := v1.Group("/auth")
+	auth.Post("/login", authHandler.Login)
+	auth.Post("/refresh", authHandler.Refresh)
+	auth.Post("/logout", authHandler.Logout)
+	auth.Get("/me", jwtpres.Authenticate(authSvc), authHandler.Me)
+	auth.Post("/password/reset-request", authHandler.RequestPasswordReset)
+	auth.Post("/password/reset", authHandler.ResetPassword)
+
+	admin := v1.Group("/admin")
+
+	custHandler := custpres.NewHandler(custapp.NewService(custinfra.NewSQLRepository(queries)))
+	customers := admin.Group("/customers")
+	customers.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerRead), custHandler.List)
+	customers.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerRead), custHandler.Get)
+	customers.Post("/", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Create)
+	customers.Put("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Update)
+	customers.Patch("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Update)
+	customers.Delete("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Delete)
+
+	pkgHandler := pkgpres.NewHandler(pkgapp.NewService(pkginfra.NewSQLRepository(queries, events)))
+	packages := admin.Group("/packages")
+	packages.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermPackageRead), pkgHandler.List)
+	packages.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermPackageRead), pkgHandler.Get)
+	packages.Post("/", jwtpres.Require(authSvc, jwtauthdomain.PermPackageWrite), pkgHandler.Create)
+	packages.Put("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermPackageWrite), pkgHandler.Update)
+	packages.Patch("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermPackageWrite), pkgHandler.Update)
+	packages.Delete("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermPackageWrite), pkgHandler.Delete)
+
+	pppoeRepo := pppoeinfra.NewSQLRepository(queries, events)
+	pppoeHandler := pppoepres.NewHandler(pppoeapp.NewService(
+		pppoeRepo,
+		pppoeinfra.NewSQLPortalStore(pool, queries),
+		pppoeinfra.NewCoADisconnecter(queries, coaSender),
+		hasher,
+	))
+	pppoe := admin.Group("/pppoe-accounts")
+	pppoeRead := jwtpres.Require(authSvc, jwtauthdomain.PermPPPoERead)
+	pppoeWrite := jwtpres.Require(authSvc, jwtauthdomain.PermPPPoEWrite)
+	pppoe.Get("/", pppoeRead, pppoeHandler.List)
+	pppoe.Get("/:id", pppoeRead, pppoeHandler.Get)
+	pppoe.Post("/", pppoeWrite, pppoeHandler.Create)
+	pppoe.Put("/:id", pppoeWrite, pppoeHandler.Update)
+	pppoe.Patch("/:id", pppoeWrite, pppoeHandler.Update)
+	pppoe.Delete("/:id", pppoeWrite, pppoeHandler.Delete)
+	pppoe.Post("/:id/isolate", pppoeWrite, pppoeHandler.Isolate)
+	pppoe.Post("/:id/activate", pppoeWrite, pppoeHandler.Activate)
+	pppoe.Post("/:id/disable", pppoeWrite, pppoeHandler.Disable)
+	pppoe.Post("/:id/extend", pppoeWrite, pppoeHandler.Extend)
+	pppoe.Post("/:id/change-package", pppoeWrite, pppoeHandler.ChangePackage)
+	pppoe.Post("/:id/reset-quota", pppoeWrite, pppoeHandler.ResetQuota)
+	pppoe.Post("/:id/disconnect", pppoeWrite, pppoeHandler.Disconnect)
+	pppoe.Post("/:id/portal-account", pppoeWrite, pppoeHandler.CreatePortalAccount)
+	pppoe.Post("/:id/portal-account/reset", pppoeWrite, pppoeHandler.ResetPortalAccount)
+
+	nasHandler := naspres.NewHandler(nasapp.NewService(nasinfra.NewSQLRepository(queries, events), coaSender))
+	nas := admin.Group("/nas")
+	nasRead := jwtpres.Require(authSvc, jwtauthdomain.PermNASRead)
+	nasWrite := jwtpres.Require(authSvc, jwtauthdomain.PermNASWrite)
+	nas.Get("/", nasRead, nasHandler.List)
+	nas.Get("/:id", nasRead, nasHandler.Get)
+	nas.Post("/", nasWrite, nasHandler.Create)
+	nas.Put("/:id", nasWrite, nasHandler.Update)
+	nas.Patch("/:id", nasWrite, nasHandler.Update)
+	nas.Delete("/:id", nasWrite, nasHandler.Delete)
+	nas.Post("/:id/test-coa", nasWrite, nasHandler.TestCoA)
+
+	sessHandler := sesspres.NewHandler(sessapp.NewService(sessinfra.NewSQLRepository(queries)))
+	sessions := admin.Group("/sessions", jwtpres.Require(authSvc, jwtauthdomain.PermSessionRead))
+	sessions.Get("/", sessHandler.List)
+	sessions.Get("/history", sessHandler.History)
+
+	billRepo := billinfra.NewSQLRepository(pool, queries, events)
+	billHandler := billpres.NewHandler(billapp.NewService(billRepo, billRepo, billRepo))
+	invoices := admin.Group("/invoices")
+	invoices.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), billHandler.List)
+	invoices.Get("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceRead), billHandler.Get)
+	invoices.Post("/", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceWrite), billHandler.Create)
+	invoices.Post("/:id/void", jwtpres.Require(authSvc, jwtauthdomain.PermInvoiceWrite), billHandler.Void)
+	invoices.Post("/:id/manual-payment", jwtpres.Require(authSvc, jwtauthdomain.PermPaymentWrite), billHandler.ManualPayment)
 }
