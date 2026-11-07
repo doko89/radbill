@@ -12,9 +12,11 @@ import (
 // Audited actions. Only mutations are logged, plus the explicit
 // pppoe.password_reveal read (PRD 5.2). Reads are never audited.
 const (
-	ActionCustomerCreated = "customer.created"
-	ActionCustomerUpdated = "customer.updated"
-	ActionCustomerDeleted = "customer.deleted"
+	ActionCustomerCreated       = "customer.created"
+	ActionCustomerUpdated       = "customer.updated"
+	ActionCustomerDeleted       = "customer.deleted"
+	ActionCustomerPortalCreated = "customer.portal_created"
+	ActionCustomerPortalReset   = "customer.portal_reset"
 
 	ActionPackageCreated = "package.created"
 	ActionPackageUpdated = "package.updated"

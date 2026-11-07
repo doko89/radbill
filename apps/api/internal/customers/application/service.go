@@ -3,9 +3,12 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"boilerplate/api/internal/customers/domain"
+	authdomain "boilerplate/api/internal/jwtauth/domain"
+	"boilerplate/api/internal/shared/apperr"
 	"boilerplate/api/internal/shared/id"
 )
 
@@ -40,12 +43,28 @@ type UpdateInput struct {
 // Service implements customer use cases.
 type Service struct {
 	customers domain.Repository
+	portal    domain.PortalStore
+	hasher    authdomain.Hasher
 	now       func() time.Time
 }
 
 // NewService builds a Service.
 func NewService(customers domain.Repository) *Service {
 	return &Service{customers: customers, now: time.Now}
+}
+
+// SetPortalStore enables the portal-account use cases (same store and
+// hasher the pppoe context uses; must be wired before those methods).
+func (s *Service) SetPortalStore(portal domain.PortalStore, hasher authdomain.Hasher) {
+	s.portal = portal
+	s.hasher = hasher
+}
+
+// PortalDTO carries a one-time portal credential (shown once at create/reset).
+type PortalDTO struct {
+	AccountID string `json:"account_id"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
 }
 
 // Create validates and persists a customer.
@@ -104,6 +123,65 @@ func (s *Service) Update(ctx context.Context, cid string, in UpdateInput) (Custo
 // Delete removes a customer.
 func (s *Service) Delete(ctx context.Context, cid string) error {
 	return s.customers.Delete(ctx, cid)
+}
+
+// CreatePortalAccount creates a portal login directly for a customer.
+// An empty password generates a random one; it is returned exactly once.
+func (s *Service) CreatePortalAccount(ctx context.Context, cid, username, password string) (PortalDTO, error) {
+	if username == "" {
+		return PortalDTO{}, apperr.Invalid("username", "required")
+	}
+	if password == "" {
+		password = id.New()[:12]
+	}
+	if len(password) < 8 {
+		return PortalDTO{}, apperr.Invalid("password", "minimum 8 characters")
+	}
+	c, err := s.customers.Get(ctx, cid)
+	if err != nil {
+		return PortalDTO{}, err
+	}
+	if c.AccountID != "" {
+		return PortalDTO{}, domain.ErrPortalExists
+	}
+	hash, err := s.hasher.Hash(password)
+	if err != nil {
+		return PortalDTO{}, err
+	}
+	accountID, err := s.portal.CreatePortalAccount(ctx, cid, username, hash, s.now().UTC())
+	if err != nil {
+		if errors.Is(err, authdomain.ErrUsernameTaken) {
+			return PortalDTO{}, domain.ErrPortalUsernameTaken
+		}
+		return PortalDTO{}, err
+	}
+	return PortalDTO{AccountID: accountID, Username: username, Password: password}, nil
+}
+
+// ResetPortalAccount replaces the portal password (random when empty).
+func (s *Service) ResetPortalAccount(ctx context.Context, cid, password string) (PortalDTO, error) {
+	if password == "" {
+		password = id.New()[:12]
+	}
+	if len(password) < 8 {
+		return PortalDTO{}, apperr.Invalid("password", "minimum 8 characters")
+	}
+	c, err := s.customers.Get(ctx, cid)
+	if err != nil {
+		return PortalDTO{}, err
+	}
+	if c.AccountID == "" {
+		return PortalDTO{}, domain.ErrNoPortalAccount
+	}
+	hash, err := s.hasher.Hash(password)
+	if err != nil {
+		return PortalDTO{}, err
+	}
+	username, err := s.portal.ResetPortalPassword(ctx, cid, hash, s.now().UTC())
+	if err != nil {
+		return PortalDTO{}, err
+	}
+	return PortalDTO{Username: username, Password: password}, nil
 }
 
 func toDTO(c *domain.Customer) CustomerDTO {

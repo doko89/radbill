@@ -5,6 +5,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { ApiError } from "../../../shared/lib/api";
 import { formatDateTime } from "../../../shared/lib/billing-format";
 import {
+  Badge,
   Button,
   ConfirmDialog,
   EmptyState,
@@ -123,6 +124,7 @@ export function CustomersPage() {
                 <TH>Nama</TH>
                 <TH>Telepon</TH>
                 <TH>Alamat</TH>
+                <TH>Portal</TH>
                 <TH>Dibuat</TH>
                 <TH ariaLabel="aksi" align="right" />
               </TR>
@@ -135,6 +137,13 @@ export function CustomersPage() {
                   </TD>
                   <TD muted>{customerPhone(customer) || "-"}</TD>
                   <TD muted>{customerAddress(customer) || "-"}</TD>
+                  <TD>
+                    {customer.account_id ? (
+                      <Badge tone="success">ada</Badge>
+                    ) : (
+                      <span className="text-slate-400 text-sm">belum</span>
+                    )}
+                  </TD>
                   <TD muted>{formatDateTime(customer.created_at)}</TD>
                   <TD align="right">
                     <div className="flex justify-end gap-2">

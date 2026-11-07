@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { billingRequest, billingUpdate, withQuery } from "../../shared/lib/billing-api";
 import { firstText } from "../../shared/lib/billing-format";
+import {
+  extractPortalCredential,
+  portalAccountBody,
+} from "../../shared/lib/portal-credential";
+import type {
+  PortalAccountInput,
+  PortalCredential,
+} from "../../shared/lib/portal-credential";
 
 export const customerSchema = z.object({
   id: z.string(),
@@ -86,6 +94,28 @@ export async function updateCustomer(id: string, input: CustomerFormInput): Prom
 
 export async function deleteCustomer(id: string): Promise<void> {
   await billingRequest<unknown>(`/api/v1/admin/customers/${id}`, { method: "DELETE" });
+}
+
+export async function createCustomerPortalAccount(
+  id: string,
+  input: PortalAccountInput,
+): Promise<PortalCredential> {
+  const raw: unknown = await billingRequest(`/api/v1/admin/customers/${id}/portal-account`, {
+    method: "POST",
+    body: portalAccountBody(input),
+  });
+  return extractPortalCredential(raw);
+}
+
+export async function resetCustomerPortalAccount(
+  id: string,
+  input: PortalAccountInput,
+): Promise<PortalCredential> {
+  const raw: unknown = await billingRequest(`/api/v1/admin/customers/${id}/portal-account/reset`, {
+    method: "POST",
+    body: portalAccountBody(input),
+  });
+  return extractPortalCredential(raw);
 }
 
 export const customerFormSchema = z.object({

@@ -327,7 +327,9 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 	// instance across funcs would only add plumbing).
 	g4audit := auditapp.NewService(auditinfra.NewStore(queries))
 
-	custHandler := custpres.NewHandler(custapp.NewService(custinfra.NewSQLRepository(queries)))
+	custSvc := custapp.NewService(custinfra.NewSQLRepository(queries))
+	custSvc.SetPortalStore(pppoeinfra.NewSQLPortalStore(pool, queries), hasher)
+	custHandler := custpres.NewHandler(custSvc)
 	custHandler.SetAuditor(g4audit)
 	customers := admin.Group("/customers")
 	customers.Get("/", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerRead), custHandler.List)
@@ -336,6 +338,9 @@ func registerBillingRoutes(app *fiber.App, api fiber.Router, cfg config.Config, 
 	customers.Put("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Update)
 	customers.Patch("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Update)
 	customers.Delete("/:id", jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite), custHandler.Delete)
+	custWrite := jwtpres.Require(authSvc, jwtauthdomain.PermCustomerWrite)
+	customers.Post("/:id/portal-account", custWrite, custHandler.CreatePortalAccount)
+	customers.Post("/:id/portal-account/reset", custWrite, custHandler.ResetPortalAccount)
 
 	pkgHandler := pkgpres.NewHandler(pkgapp.NewService(pkginfra.NewSQLRepository(queries, events)))
 	pkgHandler.SetAuditor(g4audit)

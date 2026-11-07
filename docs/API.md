@@ -84,6 +84,8 @@ tambahan per resource, mis. `?status=`).
 |---|---|---|---|---|
 | GET/POST | `/admin/customers` | JWT | `customer:read` / `:write` | List + buat pelanggan |
 | GET/PUT/PATCH/DELETE | `/admin/customers/:id` | JWT | `customer:read` / `:write` | Detail + ubah + hapus |
+| POST | `/admin/customers/:id/portal-account` | JWT | `customer:write` | Buat login portal + sandi (langsung per pelanggan) |
+| POST | `/admin/customers/:id/portal-account/reset` | JWT | `customer:write` | Reset sandi portal |
 | GET/POST | `/admin/packages` | JWT | `package:read` / `:write` | List + buat paket |
 | GET/PUT/PATCH/DELETE | `/admin/packages/:id` | JWT | `package:read` / `:write` | Detail + ubah + hapus |
 | GET/POST | `/admin/nas` | JWT | `nas:read` / `:write` | List + buat NAS |

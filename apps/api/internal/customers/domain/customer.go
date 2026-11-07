@@ -14,6 +14,12 @@ var (
 	ErrCustomerNotFound = errors.New("customer not found")
 	// ErrCustomerInUse is returned when deleting a customer with PPPoE accounts.
 	ErrCustomerInUse = errors.New("customer still has pppoe accounts")
+	// ErrPortalExists is returned when the customer already has a portal account.
+	ErrPortalExists = errors.New("customer already has a portal account")
+	// ErrNoPortalAccount is returned when the customer has no portal account.
+	ErrNoPortalAccount = errors.New("customer has no portal account")
+	// ErrPortalUsernameTaken is returned on duplicate portal usernames.
+	ErrPortalUsernameTaken = errors.New("portal username already taken")
 )
 
 // Customer is a billing customer (1:N with PPPoE accounts).
@@ -73,4 +79,16 @@ type Repository interface {
 	Count(ctx context.Context) (int64, error)
 	Update(ctx context.Context, c *Customer) error
 	Delete(ctx context.Context, id string) error
+}
+
+// PortalStore creates and resets customer portal logins.
+// Implemented in infrastructure (accounts + customers in one transaction).
+// The pppoe context implementation satisfies this interface structurally.
+type PortalStore interface {
+	// CreatePortalAccount creates a role=user account and links it to the
+	// customer. It returns the account id.
+	CreatePortalAccount(ctx context.Context, customerID, username, passwordHash string, now time.Time) (string, error)
+	// ResetPortalPassword replaces the portal password (hash) and revokes
+	// refresh tokens. It returns the portal username.
+	ResetPortalPassword(ctx context.Context, customerID, passwordHash string, now time.Time) (string, error)
 }

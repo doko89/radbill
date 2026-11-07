@@ -113,6 +113,39 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": fiber.Map{"ok": true}})
 }
 
+type portalRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// CreatePortalAccount creates a portal login directly for the customer.
+func (h *Handler) CreatePortalAccount(c fiber.Ctx) error {
+	var req portalRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return writeError(c, fiber.StatusBadRequest, "invalid", "invalid JSON body")
+	}
+	dto, err := h.svc.CreatePortalAccount(c.Context(), c.Params("id"), req.Username, req.Password)
+	if err != nil {
+		return mapError(c, err)
+	}
+	h.auditLog(c, auditdomain.ActionCustomerPortalCreated, c.Params("id"), "username="+dto.Username)
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"data": dto})
+}
+
+// ResetPortalAccount replaces the portal password.
+func (h *Handler) ResetPortalAccount(c fiber.Ctx) error {
+	var req portalRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return writeError(c, fiber.StatusBadRequest, "invalid", "invalid JSON body")
+	}
+	dto, err := h.svc.ResetPortalAccount(c.Context(), c.Params("id"), req.Password)
+	if err != nil {
+		return mapError(c, err)
+	}
+	h.auditLog(c, auditdomain.ActionCustomerPortalReset, c.Params("id"), "username="+dto.Username)
+	return c.JSON(fiber.Map{"data": dto})
+}
+
 func mapError(c fiber.Ctx, err error) error {
 	var fe *apperr.FieldError
 	if errors.As(err, &fe) {
@@ -125,6 +158,12 @@ func mapError(c fiber.Ctx, err error) error {
 		return writeError(c, fiber.StatusNotFound, "not_found", "customer not found")
 	case errors.Is(err, domain.ErrCustomerInUse):
 		return writeError(c, fiber.StatusConflict, "conflict", "customer still has pppoe accounts")
+	case errors.Is(err, domain.ErrPortalExists):
+		return writeError(c, fiber.StatusConflict, "conflict", "customer already has a portal account")
+	case errors.Is(err, domain.ErrNoPortalAccount):
+		return writeError(c, fiber.StatusNotFound, "not_found", "customer has no portal account")
+	case errors.Is(err, domain.ErrPortalUsernameTaken):
+		return writeError(c, fiber.StatusConflict, "conflict", "portal username already taken")
 	}
 	return writeError(c, fiber.StatusInternalServerError, "internal", "internal error")
 }

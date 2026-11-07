@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { billingRequest, billingUpdate, withQuery } from "../../shared/lib/billing-api";
 import { firstText } from "../../shared/lib/billing-format";
+import {
+  extractPortalCredential,
+  portalAccountBody,
+} from "../../shared/lib/portal-credential";
+import type { PortalAccountInput, PortalCredential } from "../../shared/lib/portal-credential";
+
+export type { PortalAccountInput, PortalCredential };
 
 export const pppoeAccountSchema = z.object({
   id: z.string(),
@@ -127,60 +134,15 @@ export async function changePppoePackage(id: string, packageId: string): Promise
   });
 }
 
-export type PortalCredential = {
-  username: string | null;
-  password: string | null;
-};
-
-function extractCredential(raw: unknown): PortalCredential {
-  if (typeof raw !== "object" || raw === null) {
-    return { username: null, password: null };
-  }
-  const data: unknown = (raw as { data?: unknown }).data ?? raw;
-  if (typeof data !== "object" || data === null) {
-    return { username: null, password: null };
-  }
-  const record = data as Record<string, unknown>;
-  const pick = (...keys: string[]): string | null => {
-    for (const key of keys) {
-      const value: unknown = record[key];
-      if (typeof value === "string" && value.length > 0) {
-        return value;
-      }
-    }
-    return null;
-  };
-  return {
-    username: pick("username", "portal_username", "login"),
-    password: pick("password", "portal_password", "new_password", "temporary_password"),
-  };
-}
-
-export type PortalAccountInput = {
-  username?: string | undefined;
-  password?: string | undefined;
-};
-
-function portalBody(input: PortalAccountInput): Record<string, string> {
-  const body: Record<string, string> = {};
-  if (input.username !== undefined && input.username !== "") {
-    body["username"] = input.username;
-  }
-  if (input.password !== undefined && input.password !== "") {
-    body["password"] = input.password;
-  }
-  return body;
-}
-
 export async function createPortalAccount(
   id: string,
   input: PortalAccountInput,
 ): Promise<PortalCredential> {
   const raw: unknown = await billingRequest(`/api/v1/admin/pppoe-accounts/${id}/portal-account`, {
     method: "POST",
-    body: portalBody(input),
+    body: portalAccountBody(input),
   });
-  return extractCredential(raw);
+  return extractPortalCredential(raw);
 }
 
 export async function resetPortalAccount(
@@ -189,9 +151,9 @@ export async function resetPortalAccount(
 ): Promise<PortalCredential> {
   const raw: unknown = await billingRequest(
     `/api/v1/admin/pppoe-accounts/${id}/portal-account/reset`,
-    { method: "POST", body: portalBody(input) },
+    { method: "POST", body: portalAccountBody(input) },
   );
-  return extractCredential(raw);
+  return extractPortalCredential(raw);
 }
 
 export const pppoeFormSchema = z.object({
