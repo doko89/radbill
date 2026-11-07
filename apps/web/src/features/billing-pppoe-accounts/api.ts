@@ -156,18 +156,40 @@ function extractCredential(raw: unknown): PortalCredential {
   };
 }
 
-export async function createPortalAccount(id: string): Promise<PortalCredential> {
+export type PortalAccountInput = {
+  username?: string | undefined;
+  password?: string | undefined;
+};
+
+function portalBody(input: PortalAccountInput): Record<string, string> {
+  const body: Record<string, string> = {};
+  if (input.username !== undefined && input.username !== "") {
+    body["username"] = input.username;
+  }
+  if (input.password !== undefined && input.password !== "") {
+    body["password"] = input.password;
+  }
+  return body;
+}
+
+export async function createPortalAccount(
+  id: string,
+  input: PortalAccountInput,
+): Promise<PortalCredential> {
   const raw: unknown = await billingRequest(`/api/v1/admin/pppoe-accounts/${id}/portal-account`, {
     method: "POST",
-    body: {},
+    body: portalBody(input),
   });
   return extractCredential(raw);
 }
 
-export async function resetPortalAccount(id: string): Promise<PortalCredential> {
+export async function resetPortalAccount(
+  id: string,
+  input: PortalAccountInput,
+): Promise<PortalCredential> {
   const raw: unknown = await billingRequest(
     `/api/v1/admin/pppoe-accounts/${id}/portal-account/reset`,
-    { method: "POST", body: {} },
+    { method: "POST", body: portalBody(input) },
   );
   return extractCredential(raw);
 }

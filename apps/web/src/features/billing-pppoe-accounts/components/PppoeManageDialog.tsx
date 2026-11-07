@@ -49,6 +49,8 @@ export function PppoeManageDialog({
   const [revealError, setRevealError] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [credential, setCredential] = useState<PortalCredential | null>(null);
+  const [portalUsername, setPortalUsername] = useState(account.username ?? "");
+  const [portalPassword, setPortalPassword] = useState("");
 
   const packages = useQuery({
     queryKey: ["billing", "ref", "packages"],
@@ -99,10 +101,13 @@ export function PppoeManageDialog({
   });
 
   const portalMutation = useMutation({
-    mutationFn: (mode: "create" | "reset") =>
-      mode === "create" ? createPortalAccount(account.id) : resetPortalAccount(account.id),
+    mutationFn: (input: { mode: "create" | "reset"; username: string; password: string }) =>
+      input.mode === "create"
+        ? createPortalAccount(account.id, { username: input.username, password: input.password })
+        : resetPortalAccount(account.id, { password: input.password }),
     onSuccess: (data) => {
       setCredential(data);
+      setPortalPassword("");
       setNotice("Akun portal berhasil diproses. Salin kredensial sekali ini.");
       setActionError(null);
     },
@@ -111,6 +116,21 @@ export function PppoeManageDialog({
       setNotice(null);
     },
   });
+
+  function onPortal(mode: "create" | "reset"): void {
+    const username = portalUsername.trim();
+    if (mode === "create" && username === "") {
+      setActionError("username portal wajib diisi");
+      setNotice(null);
+      return;
+    }
+    if (portalPassword !== "" && portalPassword.length < 8) {
+      setActionError("sandi portal minimal 8 karakter (kosongkan untuk acak)");
+      setNotice(null);
+      return;
+    }
+    portalMutation.mutate({ mode, username, password: portalPassword });
+  }
 
   const busy =
     statusMutation.isPending ||
@@ -272,22 +292,43 @@ export function PppoeManageDialog({
           <h3 id="pppoe-portal" className="m-0 mb-2 text-sm font-bold text-slate-800">
             Akun login portal
           </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <Field
+              label="Username portal"
+              htmlFor="portal-new-username"
+              hint="Wajib saat buat baru."
+            >
+              <Input
+                id="portal-new-username"
+                autoComplete="username"
+                value={portalUsername}
+                onChange={(e) => setPortalUsername(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Sandi portal"
+              htmlFor="portal-new-password"
+              hint="Min. 8 karakter; kosongkan untuk sandi acak."
+            >
+              <Input
+                id="portal-new-password"
+                type="password"
+                autoComplete="new-password"
+                value={portalPassword}
+                onChange={(e) => setPortalPassword(e.target.value)}
+              />
+            </Field>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => portalMutation.mutate("create")}
-            >
-              Buat akun portal
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onPortal("create")}>
+              {portalMutation.isPending && portalMutation.variables?.mode === "create"
+                ? "Memproses…"
+                : "Buat akun portal"}
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => portalMutation.mutate("reset")}
-            >
-              Reset akun portal
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onPortal("reset")}>
+              {portalMutation.isPending && portalMutation.variables?.mode === "reset"
+                ? "Memproses…"
+                : "Reset sandi portal"}
             </Button>
           </div>
           {credential && (
